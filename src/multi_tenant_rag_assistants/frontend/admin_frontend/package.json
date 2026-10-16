@@ -1,0 +1,8 @@
+{
+  "name": "atlas-admin-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check scripts/app.js"
+  }
+}

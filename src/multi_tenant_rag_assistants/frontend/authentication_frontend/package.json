@@ -1,0 +1,9 @@
+{
+  "name": "atlas-auth-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "python -m http.server 4173 --directory .",
+    "check": "node --check scripts/app.js && node --check scripts/config.js && node --check scripts/components/tenant-select.js && node --check scripts/features/auth-form.js"
+  }
+}
