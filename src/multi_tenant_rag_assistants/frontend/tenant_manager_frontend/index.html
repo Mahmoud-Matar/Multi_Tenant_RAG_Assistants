@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Chat with Atlas and manage your tenant workspace." />
     <title>Atlas | Tenant manager</title>
-    <link rel="stylesheet" href="/manager-assets/styles/main.css?v=20261015-manager-ui" />
+    <link rel="stylesheet" href="/manager-assets/styles/main.css?v=20261016-document-pipeline" />
   </head>
   <body>
     <div class="app-shell">
@@ -87,7 +87,8 @@
               <div class="panel__header"><div><span class="eyebrow">Tenant knowledge base</span><h2 id="manager-knowledge-title"><span data-knowledge-tenant>Tenant</span> Knowledge Management</h2><p>Choose approved source documents for your tenant’s RAG assistant.</p></div><span class="tenant-pill" data-knowledge-badge>Tenant</span></div>
               <label class="document-dropzone" data-document-dropzone><input class="sr-only" type="file" accept=".pdf,.docx,.txt" multiple data-document-input /><span class="upload-icon"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg></span><strong>Drop approved documents here</strong><span>or <em>browse files</em> from your computer</span><small>PDF, DOCX, or TXT · Multiple files supported</small></label>
               <div class="document-queue" data-document-queue hidden><div><strong>Ready to upload</strong><span data-document-count>0 files</span></div><ul data-document-list></ul></div>
-              <div class="knowledge-footer"><span><i></i> Front-end preview — server upload is not connected yet</span><button class="primary-button" type="button" data-upload-documents disabled><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg>Upload documents</button></div>
+              <div class="knowledge-footer"><span><i></i> Manager uploads require administrator approval before indexing</span><button class="primary-button" type="button" data-upload-documents disabled><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg>Submit documents</button></div>
+              <div class="document-registry"><div class="document-registry__header"><div><strong>Document registry</strong><small>Approval and ingestion status for your tenant</small></div><span data-registry-count>—</span></div><div class="document-registry__list" data-document-registry><p class="empty-state">Loading documents…</p></div></div>
             </section>
 
             <section class="panel members-panel">
@@ -109,6 +110,6 @@
       </form>
     </dialog>
     <div class="toast" role="status" aria-live="polite" data-toast hidden></div>
-    <script type="module" src="/manager-assets/scripts/app.js?v=20261015-manager-ui"></script>
+    <script type="module" src="/manager-assets/scripts/app.js?v=20261017-rag"></script>
   </body>
 </html>

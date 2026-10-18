@@ -15,6 +15,7 @@ const documentDropzone = document.querySelector("[data-document-dropzone]");
 const documentQueue = document.querySelector("[data-document-queue]");
 const documentList = document.querySelector("[data-document-list]");
 const uploadButton = document.querySelector("[data-upload-documents]");
+const documentRegistry = document.querySelector("[data-document-registry]");
 const toast = document.querySelector("[data-toast]");
 
 const request = async (url, options = {}) => {
@@ -103,7 +104,7 @@ prompt.addEventListener("keydown", (event) => {
   }
 });
 
-const appendMessage = (role, text) => {
+const appendMessage = (role, text, citations = []) => {
   const article = document.createElement("article");
   article.className = `message message--${role}`;
   const avatar = document.createElement("span");
@@ -112,13 +113,34 @@ const appendMessage = (role, text) => {
     role === "user"
       ? document.querySelector("[data-user-initial]").textContent
       : "A";
+  const body = document.createElement("div");
+  body.className = "message__body";
   const content = document.createElement("p");
   content.textContent = text;
-  article.append(avatar, content);
+  body.append(content);
+  if (citations.length) {
+    const sources = document.createElement("div");
+    sources.className = "message__sources";
+    const label = document.createElement("strong");
+    label.textContent = "Sources";
+    sources.append(label);
+    citations.forEach((citation) => {
+      const source = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `[${citation.number}] ${citation.filename}`;
+      const excerpt = document.createElement("p");
+      excerpt.textContent = citation.excerpt;
+      source.append(summary, excerpt);
+      sources.append(source);
+    });
+    body.append(sources);
+  }
+  article.append(avatar, body);
   messages.append(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
+  return article;
 };
-composer.addEventListener("submit", (event) => {
+composer.addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = prompt.value.trim();
   if (!text) return;
@@ -126,12 +148,26 @@ composer.addEventListener("submit", (event) => {
   appendMessage("user", text);
   prompt.value = "";
   resizePrompt();
-  window.setTimeout(() => {
-    appendMessage(
-      "assistant",
-      "Your message is ready. The LLM response will appear here once the chat backend is connected.",
-    );
-  }, 250);
+  prompt.disabled = true;
+  sendButton.disabled = true;
+  const pending = appendMessage("assistant", "Searching your tenant's approved knowledge…");
+  pending.classList.add("message--pending");
+  try {
+    const result = await request("/api/rag/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: text }),
+    });
+    pending.remove();
+    appendMessage("assistant", result.answer, result.citations);
+  } catch (error) {
+    pending.remove();
+    appendMessage("assistant", error.message || "The assistant could not answer right now.");
+  } finally {
+    prompt.disabled = false;
+    resizePrompt();
+    prompt.focus();
+  }
 });
 document.querySelectorAll("[data-suggestion]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -264,6 +300,7 @@ const loadTenantWorkspace = async () => {
   document.querySelector("[data-tenant-status]").textContent =
     result.tenant.is_active ? "Active" : "Suspended";
   renderUsers();
+  await loadDocuments();
 };
 
 document.querySelectorAll("[data-close-role-dialog]").forEach((button) => {
@@ -334,6 +371,95 @@ const selectFiles = (files) => {
   renderFiles();
   if (files.length && !state.files.length) showToast("Choose PDF, DOCX, or TXT documents.");
 };
+
+const documentStatus = (storedDocument) =>
+  storedDocument.version.approval_status === "pending"
+    ? "pending approval"
+    : storedDocument.version.ingestion_status;
+
+const renderDocuments = (documents) => {
+  document.querySelector("[data-registry-count]").textContent =
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}`;
+  if (!documents.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No documents have been submitted for this tenant.";
+    documentRegistry.replaceChildren(empty);
+    return;
+  }
+  documentRegistry.replaceChildren(
+    ...documents.map((storedDocument) => {
+      const record = document.createElement("article");
+      record.className = "document-record";
+      const copy = document.createElement("div");
+      copy.className = "document-record__name";
+      const name = document.createElement("strong");
+      name.textContent = storedDocument.original_filename;
+      const details = document.createElement("small");
+      details.textContent = `Version ${storedDocument.version.version_number} · ${formatFileSize(storedDocument.version.size_bytes)} · ${storedDocument.version.chunk_count} chunks`;
+      copy.append(name, details);
+      const currentStatus = documentStatus(storedDocument);
+      const badge = document.createElement("span");
+      badge.className = `document-status document-status--${currentStatus.replaceAll(" ", "-")}`;
+      badge.textContent = currentStatus;
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "delete-document";
+      revoke.textContent = "Revoke";
+      revoke.addEventListener("click", async () => {
+        if (!window.confirm(`Revoke ${storedDocument.original_filename} from retrieval?`)) return;
+        revoke.disabled = true;
+        try {
+          await request(`/api/manager/documents/${storedDocument.id}`, { method: "DELETE" });
+          await loadDocuments();
+          showToast(`${storedDocument.original_filename} revoked.`);
+        } catch (error) {
+          showToast(error.message);
+        } finally {
+          revoke.disabled = false;
+        }
+      });
+      const actions = document.createElement("div");
+      actions.className = "document-actions";
+      if (storedDocument.version.ingestion_status === "active") {
+        const reindex = document.createElement("button");
+        reindex.type = "button";
+        reindex.className = "reindex-document";
+        reindex.textContent = "Reindex";
+        reindex.addEventListener("click", async () => {
+          reindex.disabled = true;
+          try {
+            await request(`/api/manager/documents/${storedDocument.id}/reindex`, {
+              method: "POST",
+            });
+            await loadDocuments();
+            showToast(`${storedDocument.original_filename} queued for reindexing.`);
+          } catch (error) {
+            showToast(error.message);
+          } finally {
+            reindex.disabled = false;
+          }
+        });
+        actions.append(reindex);
+      }
+      actions.append(revoke);
+      record.append(copy, badge, actions);
+      return record;
+    }),
+  );
+};
+
+const loadDocuments = async () => {
+  try {
+    renderDocuments(await request("/api/manager/documents"));
+  } catch (error) {
+    document.querySelector("[data-registry-count]").textContent = "—";
+    const message = document.createElement("p");
+    message.className = "empty-state";
+    message.textContent = error.message;
+    documentRegistry.replaceChildren(message);
+  }
+};
 documentInput.addEventListener("change", () => selectFiles(documentInput.files));
 ["dragenter", "dragover"].forEach((eventName) => {
   documentDropzone.addEventListener(eventName, (event) => {
@@ -348,8 +474,29 @@ documentInput.addEventListener("change", () => selectFiles(documentInput.files))
   });
 });
 documentDropzone.addEventListener("drop", (event) => selectFiles(event.dataTransfer.files));
-uploadButton.addEventListener("click", () => {
-  showToast("The document upload backend will be connected in a later step.");
+uploadButton.addEventListener("click", async () => {
+  if (!state.files.length) return;
+  uploadButton.disabled = true;
+  const files = [...state.files];
+  let uploaded = 0;
+  try {
+    for (const file of files) {
+      const body = new FormData();
+      body.append("file", file);
+      await request("/api/manager/documents", { method: "POST", body });
+      uploaded += 1;
+    }
+    state.files = [];
+    documentInput.value = "";
+    renderFiles();
+    await loadDocuments();
+    showToast(`${uploaded} ${uploaded === 1 ? "document" : "documents"} submitted for approval.`);
+  } catch (error) {
+    await loadDocuments();
+    showToast(`${uploaded} submitted. ${error.message}`);
+  } finally {
+    uploadButton.disabled = state.files.length === 0;
+  }
 });
 
 document.querySelector("[data-logout]").addEventListener("click", async () => {

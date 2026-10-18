@@ -47,20 +47,41 @@ prompt.addEventListener("keydown", (event) => {
   }
 });
 
-const appendMessage = (role, text) => {
+const appendMessage = (role, text, citations = []) => {
   const article = document.createElement("article");
   article.className = `message message--${role}`;
   const avatar = document.createElement("span");
   avatar.className = "message__avatar";
   avatar.textContent = role === "user" ? document.querySelector("[data-user-initial]").textContent : "A";
+  const body = document.createElement("div");
+  body.className = "message__body";
   const content = document.createElement("p");
   content.textContent = text;
-  article.append(avatar, content);
+  body.append(content);
+  if (citations.length) {
+    const sources = document.createElement("div");
+    sources.className = "message__sources";
+    const label = document.createElement("strong");
+    label.textContent = "Sources";
+    sources.append(label);
+    citations.forEach((citation) => {
+      const source = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `[${citation.number}] ${citation.filename}`;
+      const excerpt = document.createElement("p");
+      excerpt.textContent = citation.excerpt;
+      source.append(summary, excerpt);
+      sources.append(source);
+    });
+    body.append(sources);
+  }
+  article.append(avatar, body);
   messages.append(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
+  return article;
 };
 
-composer.addEventListener("submit", (event) => {
+composer.addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = prompt.value.trim();
   if (!text) return;
@@ -68,9 +89,32 @@ composer.addEventListener("submit", (event) => {
   appendMessage("user", text);
   prompt.value = "";
   resizePrompt();
-  window.setTimeout(() => {
-    appendMessage("assistant", "Your message is ready. The LLM response will appear here once the chat backend is connected.");
-  }, 250);
+  prompt.disabled = true;
+  sendButton.disabled = true;
+  const pending = appendMessage("assistant", "Searching your tenant's approved knowledge…");
+  pending.classList.add("message--pending");
+  try {
+    const response = await fetch("/api/rag/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: text }),
+    });
+    const result = await response.json();
+    if (response.status === 401) {
+      window.location.replace("/");
+      return;
+    }
+    if (!response.ok) throw new Error(result.detail || "The assistant could not answer.");
+    pending.remove();
+    appendMessage("assistant", result.answer, result.citations);
+  } catch (error) {
+    pending.remove();
+    appendMessage("assistant", error.message || "The assistant could not answer right now.");
+  } finally {
+    prompt.disabled = false;
+    resizePrompt();
+    prompt.focus();
+  }
 });
 
 document.querySelectorAll("[data-suggestion]").forEach((button) => {

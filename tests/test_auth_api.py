@@ -190,11 +190,12 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertIn('data-panel="admins"', admin_page.text)
         self.assertIn("data-document-dropzone", admin_page.text)
         self.assertIn("data-upload-documents", admin_page.text)
-        self.assertIn("v=20261015-knowledge-ui", admin_page.text)
+        self.assertIn("data-document-registry", admin_page.text)
+        self.assertIn("v=20261016-document-pipeline", admin_page.text)
         self.assertIn("no-store", admin_page.headers["cache-control"])
 
         admin_script = self.client.get(
-            "/admin-assets/scripts/app.js?v=20261015-knowledge-ui"
+            "/admin-assets/scripts/app.js?v=20261016-document-pipeline"
         )
         self.assertEqual(admin_script.status_code, 200)
         self.assertIn("tenant-card__open", admin_script.text)
@@ -202,6 +203,7 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertIn("loadAdmins", admin_script.text)
         self.assertIn("updateKnowledgePanel", admin_script.text)
         self.assertIn("selectDocuments", admin_script.text)
+        self.assertIn("loadDocuments", admin_script.text)
         self.assertIn("no-store", admin_script.headers["cache-control"])
 
         chat_redirect = self.client.get("/chat", follow_redirects=False)
@@ -336,14 +338,16 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertIn('data-panel="chat"', manager_page.text)
         self.assertIn('data-panel="management"', manager_page.text)
         self.assertIn("data-document-dropzone", manager_page.text)
-        self.assertIn("v=20261015-manager-ui", manager_page.text)
+        self.assertIn("data-document-registry", manager_page.text)
+        self.assertIn("v=20261016-document-pipeline", manager_page.text)
         self.assertIn("no-store", manager_page.headers["cache-control"])
         manager_script = self.client.get(
-            "/manager-assets/scripts/app.js?v=20261015-manager-ui"
+            "/manager-assets/scripts/app.js?v=20261016-document-pipeline"
         )
         self.assertEqual(manager_script.status_code, 200)
         self.assertIn("loadTenantWorkspace", manager_script.text)
         self.assertIn("openRoleConfirmation", manager_script.text)
+        self.assertIn("loadDocuments", manager_script.text)
         self.assertIn("no-store", manager_script.headers["cache-control"])
 
         tenant_workspace = self.client.get("/api/manager/tenant")

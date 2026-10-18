@@ -77,6 +77,90 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_rag_users_tenant_id ON rag_users (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_users_username_lower
     ON rag_users (LOWER(username)) WHERE username IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS rag_documents (
+    id VARCHAR(40) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES rag_tenants(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    original_filename VARCHAR(255) NOT NULL,
+    storage_key TEXT NOT NULL,
+    current_version INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR(32) NOT NULL DEFAULT 'quarantined',
+    access_scope VARCHAR(32) NOT NULL DEFAULT 'employee',
+    uploaded_by BIGINT NOT NULL REFERENCES rag_users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_rag_documents_status CHECK (
+        status IN ('quarantined', 'pending_approval', 'processing', 'active',
+                   'failed', 'rejected', 'deleted')
+    ),
+    CONSTRAINT chk_rag_documents_scope CHECK (
+        access_scope IN ('employee', 'management')
+    )
+);
+
+CREATE TABLE IF NOT EXISTS rag_document_versions (
+    id VARCHAR(40) PRIMARY KEY,
+    document_id VARCHAR(40) NOT NULL REFERENCES rag_documents(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    checksum CHAR(64) NOT NULL,
+    storage_key TEXT NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    approval_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    ingestion_status VARCHAR(32) NOT NULL DEFAULT 'quarantined',
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    approved_by BIGINT REFERENCES rag_users(id) ON DELETE RESTRICT,
+    approved_at TIMESTAMPTZ,
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_rag_document_version UNIQUE (document_id, version_number),
+    CONSTRAINT chk_rag_document_approval CHECK (
+        approval_status IN ('pending', 'approved', 'rejected')
+    ),
+    CONSTRAINT chk_rag_document_ingestion CHECK (
+        ingestion_status IN ('quarantined', 'queued', 'processing', 'active',
+                             'failed', 'rejected', 'superseded', 'revoked')
+    )
+);
+
+CREATE TABLE IF NOT EXISTS rag_document_audit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES rag_tenants(id) ON DELETE RESTRICT,
+    document_id VARCHAR(40),
+    version_id VARCHAR(40),
+    actor_id BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    action VARCHAR(80) NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    details JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rag_query_audit (
+    id VARCHAR(40) PRIMARY KEY,
+    tenant_id BIGINT REFERENCES rag_tenants(id) ON DELETE RESTRICT,
+    actor_id BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    query_hash CHAR(64) NOT NULL,
+    query_length INTEGER NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    retrieved_chunk_count INTEGER NOT NULL DEFAULT 0,
+    cited_chunk_count INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    details JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_rag_query_audit_outcome CHECK (
+        outcome IN ('answered', 'abstained', 'denied', 'failed')
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_documents_tenant
+    ON rag_documents (tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_rag_document_versions_document
+    ON rag_document_versions (document_id, ingestion_status);
+CREATE INDEX IF NOT EXISTS idx_rag_document_audit_tenant
+    ON rag_document_audit (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_query_audit_tenant
+    ON rag_query_audit (tenant_id, created_at DESC);
 """
 
 SEED_TENANTS = (

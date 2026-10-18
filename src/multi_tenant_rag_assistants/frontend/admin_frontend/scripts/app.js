@@ -17,6 +17,7 @@ const documentDropzone = document.querySelector("[data-document-dropzone]");
 const documentQueue = document.querySelector("[data-document-queue]");
 const documentList = document.querySelector("[data-document-list]");
 const uploadDocumentsButton = document.querySelector("[data-upload-documents]");
+const documentRegistry = document.querySelector("[data-document-registry]");
 let selectedDocuments = [];
 
 const request = async (url, options = {}) => {
@@ -215,6 +216,119 @@ const updateKnowledgePanel = (tenantId) => {
   renderDocumentQueue();
 };
 
+const documentStatus = (document) =>
+  document.version.approval_status === "pending"
+    ? "pending approval"
+    : document.version.ingestion_status;
+
+const createDocumentButton = (label, className, handler) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await handler();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+};
+
+const renderDocuments = (documents) => {
+  document.querySelector("[data-registry-count]").textContent =
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}`;
+  if (!documents.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No documents have been uploaded for this tenant.";
+    documentRegistry.replaceChildren(empty);
+    return;
+  }
+  documentRegistry.replaceChildren(
+    ...documents.map((storedDocument) => {
+      const record = document.createElement("article");
+      record.className = "document-record";
+      const copy = document.createElement("div");
+      copy.className = "document-record__name";
+      const name = document.createElement("strong");
+      name.textContent = storedDocument.original_filename;
+      const details = document.createElement("small");
+      details.textContent = `Version ${storedDocument.version.version_number} · ${formatFileSize(storedDocument.version.size_bytes)} · ${storedDocument.version.chunk_count} chunks`;
+      copy.append(name, details);
+      const currentStatus = documentStatus(storedDocument);
+      const badge = document.createElement("span");
+      badge.className = `document-status document-status--${currentStatus.replaceAll(" ", "-")}`;
+      badge.textContent = currentStatus;
+      const actions = document.createElement("div");
+      actions.className = "document-actions";
+      if (storedDocument.version.approval_status === "pending") {
+        actions.append(
+          createDocumentButton("Approve", "approve-document", async () => {
+            await request(`/api/admin/documents/${storedDocument.version.id}/approve`, {
+              method: "POST",
+            });
+            await loadDocuments(state.selectedTenantId);
+            showToast(`${storedDocument.original_filename} approved and queued for indexing.`);
+          }),
+          createDocumentButton("Reject", "reject-document", async () => {
+            const reason = window.prompt("Reason for rejecting this document:", "");
+            if (reason === null) return;
+            await request(`/api/admin/documents/${storedDocument.version.id}/reject`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reason }),
+            });
+            await loadDocuments(state.selectedTenantId);
+            showToast(`${storedDocument.original_filename} rejected.`);
+          }),
+        );
+      }
+      if (storedDocument.version.ingestion_status === "active") {
+        actions.append(
+          createDocumentButton("Reindex", "reindex-document", async () => {
+            await request(
+              `/api/admin/tenants/${state.selectedTenantId}/documents/${storedDocument.id}/reindex`,
+              { method: "POST" },
+            );
+            await loadDocuments(state.selectedTenantId);
+            showToast(`${storedDocument.original_filename} queued for reindexing.`);
+          }),
+        );
+      }
+      actions.append(
+        createDocumentButton("Revoke", "delete-document", async () => {
+          if (!window.confirm(`Revoke ${storedDocument.original_filename} from retrieval?`)) return;
+          await request(
+            `/api/admin/tenants/${state.selectedTenantId}/documents/${storedDocument.id}`,
+            { method: "DELETE" },
+          );
+          await loadDocuments(state.selectedTenantId);
+          showToast(`${storedDocument.original_filename} revoked.`);
+        }),
+      );
+      record.append(copy, badge, actions);
+      return record;
+    }),
+  );
+};
+
+const loadDocuments = async (tenantId) => {
+  try {
+    renderDocuments(await request(`/api/admin/tenants/${tenantId}/documents`));
+  } catch (error) {
+    document.querySelector("[data-registry-count]").textContent = "—";
+    const message = document.createElement("p");
+    message.className = "empty-state";
+    message.textContent = error.message;
+    documentRegistry.replaceChildren(message);
+  }
+};
+
 const loadTenants = async () => {
   const result = await request("/api/admin/tenants");
   state.tenants = result;
@@ -244,6 +358,7 @@ const loadUsers = async (tenantId) => {
   state.selectedTenantId = tenantId;
   renderTenantTabs();
   updateKnowledgePanel(tenantId);
+  loadDocuments(tenantId);
   renderEmptyUsers("Loading users…");
   try {
     const result = await request(`/api/admin/tenants/${tenantId}/users`);
@@ -355,8 +470,32 @@ documentInput.addEventListener("change", () => selectDocuments(documentInput.fil
 documentDropzone.addEventListener("drop", (event) =>
   selectDocuments(event.dataTransfer.files),
 );
-uploadDocumentsButton.addEventListener("click", () => {
-  showToast("The document upload backend will be connected in a later step.");
+uploadDocumentsButton.addEventListener("click", async () => {
+  if (!state.selectedTenantId || !selectedDocuments.length) return;
+  uploadDocumentsButton.disabled = true;
+  const files = [...selectedDocuments];
+  let uploaded = 0;
+  try {
+    for (const file of files) {
+      const body = new FormData();
+      body.append("file", file);
+      await request(`/api/admin/tenants/${state.selectedTenantId}/documents`, {
+        method: "POST",
+        body,
+      });
+      uploaded += 1;
+    }
+    selectedDocuments = [];
+    documentInput.value = "";
+    renderDocumentQueue();
+    await loadDocuments(state.selectedTenantId);
+    showToast(`${uploaded} ${uploaded === 1 ? "document" : "documents"} accepted for ingestion.`);
+  } catch (error) {
+    await loadDocuments(state.selectedTenantId);
+    showToast(`${uploaded} uploaded. ${error.message}`);
+  } finally {
+    uploadDocumentsButton.disabled = selectedDocuments.length === 0;
+  }
 });
 
 const loadAdmins = async () => {

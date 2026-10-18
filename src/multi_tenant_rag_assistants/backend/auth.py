@@ -17,8 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from psycopg import errors
 from pydantic import BaseModel, EmailStr, Field
 
+from multi_tenant_rag_assistants.RAG.api import create_rag_router
+
 from .database import connect, initialize_database
 from .admin import create_admin_router
+from .documents import create_document_router
 from .manager import create_manager_router
 
 
@@ -188,6 +191,11 @@ def authenticated_manager(atlas_session: str | None = Cookie(default=None)) -> d
     return user
 
 
+def authenticated_rag_request(atlas_session: str | None = Cookie(default=None)) -> dict:
+    """Authenticate first; the RAG policy module performs role and tenant authorization."""
+    return authenticated_user(atlas_session)
+
+
 def landing_path_for(user: dict) -> str:
     if user["role"] == "admin":
         return "/admin"
@@ -326,6 +334,8 @@ def logout(response: Response) -> Response:
 
 app.include_router(create_admin_router(authenticated_admin))
 app.include_router(create_manager_router(authenticated_manager))
+app.include_router(create_document_router(authenticated_admin, authenticated_manager))
+app.include_router(create_rag_router(authenticated_rag_request))
 
 
 authentication_frontend_directory = (

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Manage Atlas tenants and users." />
     <title>Atlas | Administration</title>
-    <link rel="stylesheet" href="/admin-assets/styles/main.css?v=20261015-knowledge-ui" />
+    <link rel="stylesheet" href="/admin-assets/styles/main.css?v=20261016-document-pipeline" />
   </head>
   <body>
     <header class="topbar">
@@ -79,11 +79,15 @@
             <ul data-document-list></ul>
           </div>
           <div class="knowledge-card__footer">
-            <span><i aria-hidden="true"></i> Front-end preview — server upload is not connected yet</span>
+            <span><i aria-hidden="true"></i> Files are validated, scanned, and indexed in the background</span>
             <button class="primary-button" type="button" data-upload-documents disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg>
               Upload documents
             </button>
+          </div>
+          <div class="document-registry">
+            <div class="document-registry__header"><div><strong>Document registry</strong><small>PostgreSQL lifecycle status for this tenant</small></div><span data-registry-count>—</span></div>
+            <div class="document-registry__list" data-document-registry><p class="empty-state">Loading documents…</p></div>
           </div>
         </section>
         <div class="section-heading"><div><h3>Tenant users</h3><p>Review access, roles, and account status for this tenant.</p></div></div>
@@ -131,6 +135,6 @@
     </dialog>
 
     <div class="toast" role="status" aria-live="polite" data-toast hidden></div>
-    <script type="module" src="/admin-assets/scripts/app.js?v=20261015-knowledge-ui"></script>
+    <script type="module" src="/admin-assets/scripts/app.js?v=20261016-document-pipeline"></script>
   </body>
 </html>

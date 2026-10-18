@@ -108,10 +108,17 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .messages { width: min(780px, calc(100% - 42px)); margin: 0 auto; padding: 35px 0; }
 .message { display: flex; gap: 12px; margin-bottom: 24px; }
 .message__avatar { display: grid; flex: 0 0 auto; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 800; }
-.message p { max-width: min(680px, calc(100% - 42px)); margin: 0; padding: 9px 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.message__body { max-width: min(680px, calc(100% - 42px)); }
+.message__body > p { margin: 0; padding: 9px 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
 .message--user { flex-direction: row-reverse; }
 .message--user .message__avatar { border-radius: 50%; background: #4f5670; }
-.message--user p { padding: 11px 15px; border-radius: 14px 4px 14px 14px; background: var(--primary-soft); }
+.message--user .message__body > p { padding: 11px 15px; border-radius: 14px 4px 14px 14px; background: var(--primary-soft); }
+.message--pending { opacity: .68; }
+.message__sources { display: grid; gap: 6px; margin-top: 8px; padding-top: 11px; border-top: 1px solid var(--line); }
+.message__sources > strong { color: var(--muted); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; }
+.message__sources details { padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.message__sources summary { cursor: pointer; color: var(--primary); font-size: 11px; font-weight: 700; }
+.message__sources details p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .composer-wrap { width: min(820px, calc(100% - 42px)); margin: 0 auto; padding: 12px 0 18px; }
 .composer { padding: 13px 13px 10px 17px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); box-shadow: var(--shadow); transition: border-color .18s, box-shadow .18s; }

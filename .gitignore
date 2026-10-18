@@ -2,6 +2,12 @@ refrences/
 .env
 .venv/
 node_modules/
+storage/
+chroma_data/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local experiments and reference material
+/src/multi_tenant_rag_assistants/Random_codes/
+/docs/langchain_demo.pdf
