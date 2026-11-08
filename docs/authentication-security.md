@@ -68,6 +68,9 @@ an individual session or use **Log out all devices**. The API routes are:
 - `POST /api/auth/logout-all`
 
 Normal logout revokes the current server-side session before deleting the cookie.
+Suspending an account, changing its role, or deactivating its tenant also revokes
+all active sessions for the affected scope. Reactivation therefore requires a new
+login and cannot silently restore an older browser session.
 
 ## Operational notes
 
@@ -77,3 +80,9 @@ Normal logout revokes the current server-side session before deleting the cookie
   maintenance job in production.
 - Authentication email failures are logged without returning account-existence
   information to the requester.
+- API responses use `Cache-Control: no-store`, include a generated `X-Request-ID`,
+  and apply cross-origin opener/resource policies in addition to CSP and frame
+  restrictions.
+- `/api/health/live` proves the process can answer HTTP. `/api/health/ready`
+  verifies PostgreSQL connectivity and returns HTTP 503 without exposing the
+  underlying connection error when the dependency is unavailable.

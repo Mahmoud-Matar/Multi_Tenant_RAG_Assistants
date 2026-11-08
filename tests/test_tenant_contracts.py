@@ -17,7 +17,7 @@ from multi_tenant_rag_assistants.backend.database import connect
 class TenantDomainContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.client_context = TestClient(app, headers={"Origin": "http://testserver"})
+        cls.client_context = TestClient(app, headers={"Origin": "http://127.0.0.1:8000"})
         cls.client = cls.client_context.__enter__()
 
     @classmethod

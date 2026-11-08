@@ -7,6 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
@@ -18,6 +19,7 @@ from psycopg import errors
 from pydantic import BaseModel, EmailStr, Field
 
 from multi_tenant_rag_assistants.RAG.api import create_rag_router
+from multi_tenant_rag_assistants import __version__
 
 from .database import connect, initialize_database
 from .admin import create_admin_router
@@ -80,7 +82,15 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Atlas Authentication API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Atlas Governed Multi-Tenant RAG API",
+    description=(
+        "Phase 2 API for authenticated tenant assistance, signed domain contracts, "
+        "document governance, and security incident response."
+    ),
+    version=__version__,
+    lifespan=lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(ALLOWED_ORIGINS),
@@ -93,6 +103,8 @@ app.add_middleware(
 @app.middleware("http")
 async def prevent_stale_frontend_assets(request: Request, call_next):
     """Enforce same-origin mutations and attach browser security headers."""
+    request_id = f"req_{uuid4().hex[:20]}"
+    request.state.request_id = request_id
     response = None
     if request.url.path.startswith("/api/") and request.method in {
         "POST",
@@ -110,6 +122,8 @@ async def prevent_stale_frontend_assets(request: Request, call_next):
     if response is None:
         response = await call_next(request)
     path = request.url.path
+    if path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     frontend_path = (
         path in {"/", "/admin", "/admin/", "/chat", "/chat/", "/manager", "/manager/"}
         or path.startswith("/admin-assets/")
@@ -130,6 +144,9 @@ async def prevent_stale_frontend_assets(request: Request, call_next):
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Request-ID"] = request_id
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if COOKIE_SECURE:
@@ -258,10 +275,36 @@ def landing_path_for(user: dict) -> str:
 
 
 @app.get("/api/health")
-def health() -> dict:
-    with connect() as connection:
-        connection.execute("SELECT 1")
-    return {"status": "ok"}
+def health(response: Response) -> dict:
+    """Compatibility readiness endpoint used by existing deployments."""
+    return readiness(response)
+
+
+@app.get("/api/health/live")
+def liveness() -> dict:
+    return {"status": "ok", "phase": 2, "version": __version__}
+
+
+@app.get("/api/health/ready")
+def readiness(response: Response) -> dict:
+    try:
+        with connect() as connection:
+            connection.execute("SELECT 1")
+    except Exception:
+        LOGGER.warning("Readiness check failed; database is unavailable.")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "not_ready",
+            "phase": 2,
+            "version": __version__,
+            "checks": {"database": "unavailable"},
+        }
+    return {
+        "status": "ok",
+        "phase": 2,
+        "version": __version__,
+        "checks": {"database": "ok"},
+    }
 
 
 @app.get("/api/tenants")

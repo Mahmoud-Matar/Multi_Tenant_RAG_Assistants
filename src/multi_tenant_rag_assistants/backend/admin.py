@@ -240,6 +240,14 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
                     (tenant_id,),
                 ).fetchone()
                 tenant["contract_state"] = state_row["state"] if state_row else None
+                if not payload.is_active:
+                    connection.execute(
+                        """
+                        UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+                        WHERE tenant_id = %s AND revoked_at IS NULL
+                        """,
+                        (tenant_id,),
+                    )
         if tenant is None:
             raise HTTPException(status_code=404, detail="Tenant not found.")
         return {"tenant": tenant_admin_payload(tenant)}
@@ -330,6 +338,14 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
                 """,
                 (payload.is_active, user_id),
             ).fetchone()
+            if user is not None and not payload.is_active:
+                connection.execute(
+                    """
+                    UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+                    WHERE user_id = %s AND revoked_at IS NULL
+                    """,
+                    (user_id,),
+                )
         if user is None:
             raise HTTPException(status_code=404, detail="User not found.")
         return {"user": user}
@@ -388,6 +404,13 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
                 """,
                 (payload.role, user_id),
             ).fetchone()
+            connection.execute(
+                """
+                UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s AND revoked_at IS NULL
+                """,
+                (user_id,),
+            )
         return {"user": user}
 
     return router

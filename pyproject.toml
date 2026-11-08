@@ -1,7 +1,7 @@
 [project]
 name = "multi-tenant-rag-assistants"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Governed multi-tenant RAG assistants with signed tenant policy, secure document ingestion, and auditable incident response"
 readme = "README.md"
 authors = [
     { name = "Mahmoud-Matar", email = "mahmoud_gamal2001@aucegypt.edu" }

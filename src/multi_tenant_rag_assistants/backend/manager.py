@@ -103,6 +103,13 @@ def create_manager_router(require_manager: Callable[..., dict]) -> APIRouter:
                 """,
                 (payload.role, user_id, manager["tenant_id"]),
             ).fetchone()
+            connection.execute(
+                """
+                UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s AND revoked_at IS NULL
+                """,
+                (user_id,),
+            )
         return {"user": user}
 
     return router

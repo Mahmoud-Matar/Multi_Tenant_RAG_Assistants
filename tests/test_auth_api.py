@@ -12,13 +12,14 @@ from fastapi.testclient import TestClient
 
 from multi_tenant_rag_assistants.backend.auth import app
 from multi_tenant_rag_assistants.backend.auth_security import validate_signing_secret
+from multi_tenant_rag_assistants.backend.contracts import ensure_default_contract
 from multi_tenant_rag_assistants.backend.database import connect
 
 
 class AuthenticationApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.client_context = TestClient(app, headers={"Origin": "http://testserver"})
+        cls.client_context = TestClient(app, headers={"Origin": "http://127.0.0.1:8000"})
         cls.client = cls.client_context.__enter__()
 
     @classmethod
@@ -542,8 +543,17 @@ class AuthenticationApiTests(unittest.TestCase):
 
     def test_security_headers_origin_protection_and_secret_validation(self) -> None:
         response = self.client.get("/api/health")
+        self.assertEqual(response.json()["phase"], 2)
+        self.assertEqual(response.json()["version"], "0.2.0")
+        self.assertEqual(response.json()["checks"], {"database": "ok"})
+        self.assertEqual(self.client.get("/api/health/live").status_code, 200)
+        self.assertEqual(self.client.get("/api/health/ready").status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertTrue(response.headers["x-request-id"].startswith("req_"))
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertEqual(response.headers["cross-origin-opener-policy"], "same-origin")
+        self.assertEqual(response.headers["cross-origin-resource-policy"], "same-origin")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
         self.assertEqual(self.client.get("/verify-email?token=example").status_code, 200)
         self.assertEqual(self.client.get("/reset-password?token=example").status_code, 200)
@@ -557,6 +567,103 @@ class AuthenticationApiTests(unittest.TestCase):
             validate_signing_secret("replace-with-a-long-random-secret")
         with self.assertRaises(RuntimeError):
             validate_signing_secret("short")
+
+        with patch(
+            "multi_tenant_rag_assistants.backend.auth.connect",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            unavailable = self.client.get("/api/health/ready")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json()["status"], "not_ready")
+        self.assertNotIn("database unavailable", unavailable.text)
+
+    def test_privilege_and_tenant_changes_revoke_active_sessions(self) -> None:
+        password = "Session-Change-42"
+        suffix = uuid4().hex
+        with connect() as connection:
+            tenant = connection.execute(
+                """
+                INSERT INTO rag_tenants (name, slug, description)
+                VALUES (%s, %s, 'Session revocation tenant') RETURNING id, name
+                """,
+                (f"Session Tenant {suffix}", f"session-{suffix}"),
+            ).fetchone()
+            self.created_tenant_ids.append(tenant["id"])
+            ensure_default_contract(connection, tenant["id"], tenant["name"])
+            user = connection.execute(
+                """
+                INSERT INTO rag_users (username, email, password_hash, tenant_id, role)
+                VALUES (%s, %s, %s, %s, 'user') RETURNING id
+                """,
+                (self.email.split("@", 1)[0], self.email, PasswordHasher().hash(password), tenant["id"]),
+            ).fetchone()
+
+        with TestClient(app) as user_device:
+            user_device.headers.update({"Origin": "http://127.0.0.1:8000"})
+            signed_in = user_device.post(
+                "/api/auth/login",
+                headers={"Origin": "http://127.0.0.1:8000"},
+                json={"identifier": self.email, "password": password, "remember": True},
+            )
+            self.assertEqual(signed_in.status_code, 200, signed_in.text)
+            self.assertEqual(
+                self.client.post(
+                    "/api/auth/login",
+                    json={"identifier": "admin", "password": "admin", "remember": False},
+                ).status_code,
+                200,
+            )
+
+            suspended = self.client.patch(
+                f"/api/admin/users/{user['id']}", json={"is_active": False}
+            )
+            self.assertEqual(suspended.status_code, 200, suspended.text)
+            self.assertEqual(user_device.get("/api/auth/me").status_code, 401)
+
+            self.assertEqual(
+                self.client.patch(
+                    f"/api/admin/users/{user['id']}", json={"is_active": True}
+                ).status_code,
+                200,
+            )
+            self.assertEqual(
+                user_device.post(
+                    "/api/auth/login",
+                    headers={"Origin": "http://127.0.0.1:8000"},
+                    json={"identifier": self.email, "password": password, "remember": True},
+                ).status_code,
+                200,
+            )
+            promoted = self.client.patch(
+                f"/api/admin/users/{user['id']}/role",
+                json={"role": "tenant_manager", "admin_password": "admin"},
+            )
+            self.assertEqual(promoted.status_code, 200, promoted.text)
+            self.assertEqual(user_device.get("/api/auth/me").status_code, 401)
+
+            self.assertEqual(
+                user_device.post(
+                    "/api/auth/login",
+                    headers={"Origin": "http://127.0.0.1:8000"},
+                    json={"identifier": self.email, "password": password, "remember": True},
+                ).status_code,
+                200,
+            )
+            deactivated = self.client.patch(
+                f"/api/admin/tenants/{tenant['id']}", json={"is_active": False}
+            )
+            self.assertEqual(deactivated.status_code, 200, deactivated.text)
+            self.assertEqual(user_device.get("/api/auth/me").status_code, 401)
+
+        with connect() as connection:
+            active_sessions = connection.execute(
+                """
+                SELECT COUNT(*) AS count FROM auth_sessions
+                WHERE user_id = %s AND revoked_at IS NULL
+                """,
+                (user["id"],),
+            ).fetchone()["count"]
+        self.assertEqual(active_sessions, 0)
 
     def test_email_verification_and_password_reset_are_one_time(self) -> None:
         tenant = self.client.get("/api/tenants").json()[0]
@@ -675,7 +782,7 @@ class AuthenticationApiTests(unittest.TestCase):
             ).status_code,
             200,
         )
-        with TestClient(app, headers={"Origin": "http://testserver"}) as other_device:
+        with TestClient(app, headers={"Origin": "http://127.0.0.1:8000"}) as other_device:
             self.assertEqual(
                 other_device.post(
                     "/api/auth/login",

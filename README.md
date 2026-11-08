@@ -1,6 +1,9 @@
-# Multi-Tenant RAG Assistants
+# Atlas Multi-Tenant RAG Assistants Phase 2
 
-A modular multi-tenant retrieval-augmented assistant project with a PostgreSQL-backed authentication API.
+A governed multi-tenant retrieval-augmented assistant with signed tenant policy,
+tenant-filtered knowledge retrieval, hardened authentication, document governance,
+and tenant-scoped security incident response. The current release is Phase 2
+(`0.2.0`).
 
 ## Project modules
 
@@ -35,6 +38,8 @@ A modular multi-tenant retrieval-augmented assistant project with a PostgreSQL-b
 4. Run `uv run multi-tenant-rag-assistants`.
 5. Open `http://127.0.0.1:8000`.
 
+Hot reload is disabled by default. Set `APP_RELOAD=true` only for local development.
+
 Only `.env` is loaded by the application. It contains local secrets and is ignored
 by Git. `.env.example` is the public template and must contain placeholders rather
 than real credentials.
@@ -52,6 +57,8 @@ than real credentials.
 | `AUTH_ALLOWED_ORIGINS` | Comma-separated exact browser origins allowed to make state-changing API requests. |
 | `AUTH_EMAIL_MODE` | `smtp`, `console` for isolated development, or `disabled`. SMTP is required for a live verification/reset flow. |
 | `PUBLIC_BASE_URL` | HTTPS application origin used to construct verification and reset links. |
+| `APP_HOST` / `APP_PORT` | Bind address and port for the packaged server command. Defaults to `127.0.0.1:8000`. |
+| `APP_RELOAD` | Enables Uvicorn hot reload when `true`. Keep `false` outside local development. |
 | `TDC_SIGNING_KEY` | Signs versioned Tenant Domain Contracts. Use a separate long random value in deployment. Local development falls back to `AUTH_SECRET_KEY` for compatibility. |
 | `COOKIE_SECURE` | Controls whether the browser sends the session cookie only over HTTPS. Use `false` for local HTTP development and `true` for an HTTPS deployment. |
 | `DOCUMENT_MAX_BYTES` | Maximum accepted upload size in bytes. The default `20971520` is 20 MiB. |
@@ -60,7 +67,7 @@ than real credentials.
 | `DOCUMENT_CHUNK_SIZE` | Target character length of chunks produced before embedding. |
 | `DOCUMENT_CHUNK_OVERLAP` | Number of overlapping characters retained between adjacent chunks to preserve context. |
 | `DOCUMENT_EMBEDDING_MODEL` | OpenAI embedding model used for both ingestion and query embeddings. Changing it requires reindexing existing documents. |
-| `RAG_CHAT_MODEL` | OpenAI chat model used to generate evidence-constrained answers. Phase 1 uses `gpt-4o-mini`. |
+| `RAG_CHAT_MODEL` | OpenAI chat model used to generate evidence-constrained answers. Phase 2 defaults to `gpt-4o-mini`. |
 | `RAG_TOP_K` | Default maximum number of authorized chunks supplied as evidence for a question. The API caps requests at 10. |
 | `RAG_MAX_DISTANCE` | Maximum accepted Chroma cosine distance. Results with a larger distance are treated as insufficiently relevant. |
 
@@ -101,3 +108,40 @@ Flagged content never reaches answer generation. Instead, a redacted in-app repo
 is created for the tenant's managers and platform administrators, who can
 acknowledge or resolve it from their dashboards. External email/SIEM delivery is
 not part of the current implementation.
+
+## Phase 2 release boundary
+
+Phase 2 includes authenticated user, tenant-manager, and platform-administrator
+surfaces; server-side sessions and revocation; signed versioned Tenant Domain
+Contracts; approved document ingestion and versioning; tenant and ACL filtered
+retrieval; evidence-only answers with citations and abstention; query audit events;
+and in-app security incident triage.
+
+The manager BI agent, metric-first analytics, controlled NL-to-SQL, provider-
+agnostic model routing, durable ingestion workers, and formal database migrations
+remain future phases. Document ingestion currently uses FastAPI background tasks,
+so an interrupted API process can lose queued work. PostgreSQL startup DDL remains
+the current schema bootstrap. These limits are documented rather than hidden.
+
+Operational probes are available at `GET /api/health/live` and
+`GET /api/health/ready`; the compatibility route `GET /api/health` performs the
+same readiness check. API responses include `X-Request-ID` and `Cache-Control:
+no-store`.
+
+## Verification
+
+Run the complete non-billable test suite:
+
+```powershell
+uv run python -m unittest discover -s tests -v
+```
+
+The live OpenAI smoke test is opt-in because it consumes API quota:
+
+```powershell
+$env:RUN_OPENAI_RAG_TESTS = "1"
+uv run python -m unittest tests.test_rag_pipeline.RAGPipelineTests.test_real_openai_embedding_and_grounded_generation -v
+```
+
+See [`docs/phase-2-release.md`](docs/phase-2-release.md) for acceptance criteria,
+tested boundaries, and known limitations.

@@ -115,3 +115,14 @@ Outcomes are `answered`, `abstained`, `denied`, or `failed`.
 - `RAG_MAX_DISTANCE` defaults to `0.8` for cosine-distance filtering.
 - `DOCUMENT_EMBEDDING_MODEL` is shared with ingestion and defaults to
   `text-embedding-3-small`; ingestion and query embeddings must use the same model.
+
+## Phase 2 verification boundary
+
+Automated tests cover mandatory pre-query tenant filters, PostgreSQL revalidation,
+cross-tenant negative retrieval, role-derived access scopes, tampered-contract
+failure, security screening before generation, incident visibility, citation
+abstention, query auditing, and authenticated API context. The real OpenAI
+embedding-and-generation smoke test is opt-in through `RUN_OPENAI_RAG_TESTS=1`.
+
+Phase 2 deliberately retains vector-distance ordering without hybrid retrieval or
+reranking. Provider-agnostic routing and metric-first BI are future work.

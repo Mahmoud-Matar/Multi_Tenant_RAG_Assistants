@@ -415,7 +415,7 @@ class RAGPipelineTests(unittest.TestCase):
         self.assertTrue(response.security_blocked)
         self.assertEqual(generator.calls, 0)
 
-        with TestClient(app, headers={"Origin": "http://testserver"}) as client:
+        with TestClient(app, headers={"Origin": "http://127.0.0.1:8000"}) as client:
             login = client.post(
                 "/api/auth/login",
                 json={
@@ -511,7 +511,7 @@ class RAGPipelineTests(unittest.TestCase):
                     retrieved_chunk_count=1,
                 )
 
-        with TestClient(app, headers={"Origin": "http://testserver"}) as client:
+        with TestClient(app, headers={"Origin": "http://127.0.0.1:8000"}) as client:
             unauthenticated = client.post(
                 "/api/rag/query", json={"question": "What is required?"}
             )
@@ -542,7 +542,7 @@ class RAGPipelineTests(unittest.TestCase):
     def test_admin_rag_request_is_denied_and_audited(self) -> None:
         question = f"Forbidden administrator query {uuid4().hex}"
         query_hash = hashlib.sha256(question.encode("utf-8")).hexdigest()
-        with TestClient(app, headers={"Origin": "http://testserver"}) as client:
+        with TestClient(app, headers={"Origin": "http://127.0.0.1:8000"}) as client:
             login = client.post(
                 "/api/auth/login",
                 json={"identifier": "admin", "password": "admin", "remember": False},

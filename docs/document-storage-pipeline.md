@@ -113,3 +113,12 @@ fails closed when the scanner is unavailable.
 
 Originals are retained after logical deletion for later retention-policy handling.
 PostgreSQL revocation and vector deletion happen immediately.
+
+## Phase 2 operational boundary
+
+Ingestion runs through FastAPI `BackgroundTasks` in this release. Registration and
+approval state are durable in PostgreSQL, but an API restart can interrupt queued
+or running parsing and embedding work. Operators should monitor versions left in
+`queued` or `processing` and retry them through the reindex action. A durable
+external worker, retry/dead-letter queue, and migration-managed schema are not part
+of Phase 2.

@@ -72,6 +72,10 @@ Recommended triage:
 The current implementation creates in-app reports. Email, SMS, SIEM, or webhook
 delivery is not yet implemented.
 
+Session and tenant lifecycle changes are part of containment: suspending the actor,
+changing an account's role, or deactivating the tenant revokes the corresponding
+active sessions immediately.
+
 ## Limitations
 
 Pattern detection can produce false positives and cannot detect every obfuscated
