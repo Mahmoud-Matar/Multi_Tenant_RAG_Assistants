@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Complete an Atlas account security action." />
+    <title>Atlas | Account verification</title>
+    <link rel="stylesheet" href="/styles/main.css?v=20261107-auth-hardening" />
+  </head>
+  <body class="security-page">
+    <main class="security-shell">
+      <a class="mobile-brand" href="/"><span class="brand__mark"><span></span><span></span><span></span></span><strong>atlas</strong></a>
+      <p class="eyebrow">Account security</p>
+      <h1 data-action-title>Checking your link…</h1>
+      <p class="security-intro" data-action-copy>Please wait while Atlas validates this one-time link.</p>
+      <form class="auth-form is-active" data-reset-form hidden>
+        <div class="field">
+          <label for="reset-password">New password</label>
+          <div class="field__control"><input id="reset-password" name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></div>
+        </div>
+        <button class="primary-button" type="submit"><span>Update password</span></button>
+      </form>
+      <p class="form-message" data-action-message hidden></p>
+      <a class="text-button" href="/">Return to sign in</a>
+    </main>
+    <script type="module" src="/scripts/features/auth-action.js?v=20261107-auth-hardening"></script>
+  </body>
+</html>

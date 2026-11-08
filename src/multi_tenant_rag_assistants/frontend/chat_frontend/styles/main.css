@@ -68,7 +68,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .workspace-card__badge, .account-row__avatar { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: rgba(147,136,255,.17); color: #b9b1ff; font-size: 10px; font-weight: 800; }
 .workspace-card strong, .account-row strong { display: block; overflow: hidden; color: #e7e9f5; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-card small, .account-row small { display: block; margin-top: 2px; color: #777f9b; font-size: 9.5px; }
-.account-row { border: 0; border-radius: 10px; background: transparent; color: #8d95ae; text-align: left; }
+.account-row { border: 0; border-radius: 10px; background: transparent; color: #8d95ae; text-align: left; text-decoration:none; }
 .account-row:hover { background: var(--sidebar-soft); }
 .account-row__avatar { border-radius: 50%; background: #565078; color: #fff; font-size: 12px; }
 .account-row__copy { flex: 1; min-width: 0; }

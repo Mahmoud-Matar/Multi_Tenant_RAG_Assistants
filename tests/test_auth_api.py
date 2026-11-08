@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import unittest
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 from uuid import uuid4
 
+from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from multi_tenant_rag_assistants.backend.auth import app
+from multi_tenant_rag_assistants.backend.auth_security import validate_signing_secret
 from multi_tenant_rag_assistants.backend.database import connect
 
 
 class AuthenticationApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.client_context = TestClient(app)
+        cls.client_context = TestClient(app, headers={"Origin": "http://testserver"})
         cls.client = cls.client_context.__enter__()
 
     @classmethod
@@ -22,9 +26,12 @@ class AuthenticationApiTests(unittest.TestCase):
         cls.client_context.__exit__(None, None, None)
 
     def setUp(self) -> None:
+        self.client.cookies.clear()
         self.email = f"integration-{uuid4().hex}@example.com"
         self.created_emails = [self.email]
         self.created_tenant_ids = []
+        with connect() as connection:
+            connection.execute("DELETE FROM auth_rate_limits")
 
     def tearDown(self) -> None:
         with connect() as connection:
@@ -68,7 +75,7 @@ class AuthenticationApiTests(unittest.TestCase):
 
         with connect() as connection:
             saved_user = connection.execute(
-                "SELECT username, password_hash, tenant_id FROM rag_users WHERE email = %s",
+                "SELECT username, password_hash, tenant_id, email_verified_at FROM rag_users WHERE email = %s",
                 (self.email,),
             ).fetchone()
         expected_username = self.email.split("@", 1)[0]
@@ -78,6 +85,7 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertNotEqual(saved_user["password_hash"], password)
         self.assertEqual(saved_user["tenant_id"], tenants[0]["id"])
         self.assertEqual(registration.json()["user"]["role"], "pending")
+        self.assertIsNone(saved_user["email_verified_at"])
 
         duplicate = self.client.post(
             "/api/auth/register",
@@ -106,6 +114,12 @@ class AuthenticationApiTests(unittest.TestCase):
             json={"identifier": self.email, "password": password, "remember": True},
         )
         self.assertEqual(pending_login.status_code, 401)
+
+        with connect() as connection:
+            connection.execute(
+                "UPDATE rag_users SET email_verified_at = CURRENT_TIMESTAMP WHERE email = %s",
+                (self.email,),
+            )
 
         approval_admin_login = self.client.post(
             "/api/auth/login",
@@ -300,6 +314,11 @@ class AuthenticationApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(managed_registration.status_code, 201)
+        with connect() as connection:
+            connection.execute(
+                "UPDATE rag_users SET email_verified_at = CURRENT_TIMESTAMP WHERE email = %s",
+                (managed_email,),
+            )
 
         tenant_users = self.client.get(
             f"/api/admin/tenants/{created_tenant['id']}/users"
@@ -359,6 +378,11 @@ class AuthenticationApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(colleague_registration.status_code, 201)
+        with connect() as connection:
+            connection.execute(
+                "UPDATE rag_users SET email_verified_at = CURRENT_TIMESTAMP WHERE email = %s",
+                (colleague_email,),
+            )
         colleague_id = colleague_registration.json()["user"]["id"]
         colleague_approval = self.client.post(
             f"/api/admin/users/{colleague_id}/approve"
@@ -515,6 +539,154 @@ class AuthenticationApiTests(unittest.TestCase):
 
         public_tenants = self.client.get("/api/tenants").json()
         self.assertNotIn(created_tenant["id"], {tenant["id"] for tenant in public_tenants})
+
+    def test_security_headers_origin_protection_and_secret_validation(self) -> None:
+        response = self.client.get("/api/health")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+        self.assertEqual(self.client.get("/verify-email?token=example").status_code, 200)
+        self.assertEqual(self.client.get("/reset-password?token=example").status_code, 200)
+        rejected = self.client.post(
+            "/api/auth/login",
+            headers={"Origin": "https://attacker.example"},
+            json={"identifier": "admin", "password": "admin", "remember": False},
+        )
+        self.assertEqual(rejected.status_code, 403)
+        with self.assertRaises(RuntimeError):
+            validate_signing_secret("replace-with-a-long-random-secret")
+        with self.assertRaises(RuntimeError):
+            validate_signing_secret("short")
+
+    def test_email_verification_and_password_reset_are_one_time(self) -> None:
+        tenant = self.client.get("/api/tenants").json()[0]
+        delivered = []
+        with patch(
+            "multi_tenant_rag_assistants.backend.auth.deliver_auth_email",
+            side_effect=lambda **message: delivered.append(message),
+        ):
+            registration = self.client.post(
+                "/api/auth/register",
+                json={
+                    "email": self.email,
+                    "password": "Initial-Pass-42",
+                    "tenant_id": tenant["id"],
+                },
+            )
+        self.assertEqual(registration.status_code, 201, registration.text)
+        verification_token = parse_qs(
+            urlparse(delivered[-1]["body"].splitlines()[-1]).query
+        )["token"][0]
+        self.assertEqual(
+            self.client.post("/api/auth/verify-email", json={"token": verification_token}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post("/api/auth/verify-email", json={"token": verification_token}).status_code,
+            400,
+        )
+        delivered.clear()
+        with patch(
+            "multi_tenant_rag_assistants.backend.auth.deliver_auth_email",
+            side_effect=lambda **message: delivered.append(message),
+        ):
+            requested = self.client.post(
+                "/api/auth/password-reset/request", json={"email": self.email}
+            )
+        self.assertEqual(requested.status_code, 202)
+        reset_token = parse_qs(
+            urlparse(delivered[-1]["body"].splitlines()[-1]).query
+        )["token"][0]
+        new_password = "Replacement-Pass-42"
+        reset = self.client.post(
+            "/api/auth/password-reset/confirm",
+            json={"token": reset_token, "new_password": new_password},
+        )
+        self.assertEqual(reset.status_code, 200, reset.text)
+        with connect() as connection:
+            user = connection.execute(
+                "SELECT password_hash, email_verified_at FROM rag_users WHERE email = %s",
+                (self.email,),
+            ).fetchone()
+        self.assertIsNotNone(user["email_verified_at"])
+        self.assertTrue(PasswordHasher().verify(user["password_hash"], new_password))
+        reused = self.client.post(
+            "/api/auth/password-reset/confirm",
+            json={"token": reset_token, "new_password": "Another-Pass-42"},
+        )
+        self.assertEqual(reused.status_code, 400)
+
+    def test_account_lockout_and_server_side_session_revocation(self) -> None:
+        tenant = self.client.get("/api/tenants").json()[0]
+        password = "Lockout-Test-42"
+        with connect() as connection:
+            user = connection.execute(
+                """
+                INSERT INTO rag_users (username, email, password_hash, tenant_id, role)
+                VALUES (%s, %s, %s, %s, 'user') RETURNING id
+                """,
+                (
+                    self.email.split("@", 1)[0],
+                    self.email,
+                    PasswordHasher().hash(password),
+                    tenant["id"],
+                ),
+            ).fetchone()
+        for _ in range(5):
+            failed = self.client.post(
+                "/api/auth/login",
+                json={
+                    "identifier": self.email,
+                    "password": "Wrong-Pass-42",
+                    "remember": False,
+                },
+            )
+            self.assertEqual(failed.status_code, 401)
+        locked = self.client.post(
+            "/api/auth/login",
+            json={"identifier": self.email, "password": password, "remember": False},
+        )
+        self.assertEqual(locked.status_code, 429)
+        with connect() as connection:
+            connection.execute(
+                "UPDATE rag_users SET failed_login_count = 0, locked_until = NULL WHERE id = %s",
+                (user["id"],),
+            )
+            connection.execute("DELETE FROM auth_rate_limits")
+        login = self.client.post(
+            "/api/auth/login",
+            json={"identifier": self.email, "password": password, "remember": False},
+        )
+        self.assertEqual(login.status_code, 200, login.text)
+        security_page = self.client.get("/account-security")
+        self.assertEqual(security_page.status_code, 200)
+        self.assertIn("data-session-list", security_page.text)
+        sessions = self.client.get("/api/auth/sessions")
+        current = next(item for item in sessions.json()["sessions"] if item["is_current"])
+        self.assertEqual(
+            self.client.delete(f"/api/auth/sessions/{current['id']}").status_code,
+            204,
+        )
+        self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
+        self.assertEqual(
+            self.client.post(
+                "/api/auth/login",
+                json={"identifier": self.email, "password": password, "remember": False},
+            ).status_code,
+            200,
+        )
+        with TestClient(app, headers={"Origin": "http://testserver"}) as other_device:
+            self.assertEqual(
+                other_device.post(
+                    "/api/auth/login",
+                    json={"identifier": self.email, "password": password, "remember": True},
+                ).status_code,
+                200,
+            )
+            active = self.client.get("/api/auth/sessions").json()["sessions"]
+            self.assertGreaterEqual(len(active), 2)
+            self.assertEqual(self.client.post("/api/auth/logout-all").status_code, 204)
+            self.assertEqual(other_device.get("/api/auth/me").status_code, 401)
 
 
 if __name__ == "__main__":

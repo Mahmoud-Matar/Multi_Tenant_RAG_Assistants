@@ -53,8 +53,25 @@ export class AuthForms {
     });
 
     document.querySelector('[data-demo-action="reset"]')?.addEventListener("click", () => {
-      this.showMessage("Password recovery will be connected when the authentication backend is added.");
+      this.requestPasswordReset();
     });
+  }
+
+  async requestPasswordReset() {
+    const email = window.prompt("Enter the verified email address for your account:");
+    if (!email) return;
+    try {
+      const response = await fetch(`${this.apiBaseUrl}/api/auth/password-reset/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Unable to request a reset link.");
+      this.showMessage(result.message);
+    } catch (error) {
+      this.showMessage(error.message || "Unable to request a reset link.", true);
+    }
   }
 
   setMode(mode) {
@@ -157,7 +174,7 @@ export class AuthForms {
         window.location.assign(result.landing_path);
       } else {
         form.reset();
-        this.showMessage(`Request submitted for ${result.user.email}. An administrator must approve the account before you can sign in.`);
+        this.showMessage(`Request submitted for ${result.user.email}. Verify your email, then wait for administrator approval before signing in.`);
       }
     } catch (error) {
       this.showMessage(error.message || "Unable to reach the server. Please try again.", true);

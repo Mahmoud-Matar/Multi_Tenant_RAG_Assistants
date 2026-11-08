@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Manage Atlas account sessions." />
+    <title>Atlas | Account security</title>
+    <link rel="stylesheet" href="/styles/main.css?v=20261107-auth-hardening" />
+  </head>
+  <body class="security-page">
+    <main class="security-shell">
+      <a class="mobile-brand" href="/chat"><span class="brand__mark"><span></span><span></span><span></span></span><strong>atlas</strong></a>
+      <p class="eyebrow">Account security</p>
+      <h1>Active sessions</h1>
+      <p class="security-intro">Review devices signed in to your account. Revoke anything you do not recognize.</p>
+      <div class="session-list" data-session-list><p class="form-message">Loading sessions…</p></div>
+      <div class="security-actions">
+        <button class="primary-button" type="button" data-logout-all><span>Log out all devices</span></button>
+        <a class="text-button" href="/chat" data-back>Return to workspace</a>
+      </div>
+      <p class="form-message" data-session-message hidden></p>
+    </main>
+    <script type="module" src="/scripts/features/account-security.js?v=20261107-auth-hardening"></script>
+  </body>
+</html>

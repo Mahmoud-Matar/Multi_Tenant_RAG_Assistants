@@ -25,4 +25,8 @@ cd src/multi_tenant_rag_assistants/frontend/authentication_frontend
 npm run check
 ```
 
-Tenant options are loaded from `GET /api/tenants`. Registration and sign-in submit to the authentication API; passwords are never stored by the browser or returned by the server.
+Tenant options are loaded from `GET /api/tenants`. Registration and sign-in submit
+to the authentication API; passwords are never stored by the browser or returned
+by the server. New accounts must complete one-time email verification and receive
+administrator approval. Password recovery uses an expiring one-time link, and the
+account-security page lets signed-in users review or revoke server-side sessions.

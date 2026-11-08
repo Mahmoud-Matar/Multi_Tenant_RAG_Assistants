@@ -17,6 +17,7 @@ A modular multi-tenant retrieval-augmented assistant project with a PostgreSQL-b
 - [`docs/document-storage-pipeline.md`](docs/document-storage-pipeline.md) — document lifecycle, API, storage, metadata, and security reference
 - [`docs/rag-query-pipeline.md`](docs/rag-query-pipeline.md) — runtime RAG security boundary, response contract, and configuration reference
 - [`docs/security-incident-response.md`](docs/security-incident-response.md) — suspicious-content blocking, incident fields, role visibility, and triage workflow
+- [`docs/authentication-security.md`](docs/authentication-security.md) — signing-key rotation, Origin enforcement, lockout, verification/reset, and session revocation
 
 ## Prerequisites
 
@@ -44,7 +45,13 @@ than real credentials.
 | --- | --- |
 | `OPENAI_API_KEY` | Authenticates requests to OpenAI for document embeddings, query embeddings, and grounded answer generation. Create a key in your OpenAI account and never commit it. |
 | `DATABASE_URL` | PostgreSQL connection string, including the host, port, database name, user, and password. Example structure: `postgresql://user:password@127.0.0.1:5432/rag_db`. |
-| `AUTH_SECRET_KEY` | Private random value used to sign and validate login session tokens. Use a long, unpredictable value that is different from your database password and OpenAI key. Changing it signs out existing sessions. |
+| `AUTH_SECRET_KEY` | Private value of at least 32 bytes used to sign login sessions. Changing it without listing the old key in `AUTH_PREVIOUS_KEYS` signs out existing sessions. |
+| `AUTH_KEY_ID` | Identifier placed in new JWT headers so multiple signing keys can coexist during rotation. |
+| `AUTH_PREVIOUS_KEYS` | Optional JSON object containing old key IDs and secrets while their sessions age out. |
+| `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | Values required when issuing and validating every session token. |
+| `AUTH_ALLOWED_ORIGINS` | Comma-separated exact browser origins allowed to make state-changing API requests. |
+| `AUTH_EMAIL_MODE` | `smtp`, `console` for isolated development, or `disabled`. SMTP is required for a live verification/reset flow. |
+| `PUBLIC_BASE_URL` | HTTPS application origin used to construct verification and reset links. |
 | `TDC_SIGNING_KEY` | Signs versioned Tenant Domain Contracts. Use a separate long random value in deployment. Local development falls back to `AUTH_SECRET_KEY` for compatibility. |
 | `COOKIE_SECURE` | Controls whether the browser sends the session cookie only over HTTPS. Use `false` for local HTTP development and `true` for an HTTPS deployment. |
 | `DOCUMENT_MAX_BYTES` | Maximum accepted upload size in bytes. The default `20971520` is 20 MiB. |
@@ -67,6 +74,12 @@ Authenticated users and tenant managers query the knowledge base through
 `POST /api/rag/query`. The tenant and allowed access scopes are always derived
 from the signed session and revalidated in PostgreSQL; the client cannot select
 or override them.
+
+Authentication sessions are server-side revocable and exposed through the
+**Account security** page. New registrations require email verification and admin
+approval. Login, registration, verification, and reset endpoints are persistently
+rate-limited, repeated password failures trigger progressive account lockout, and
+unsafe API requests require an explicitly allowed browser Origin.
 
 Platform administrators manage versioned Tenant Domain Contracts from the
 **Domain contracts** tab. Contracts validate tenant knowledge policy, domain

@@ -213,6 +213,19 @@ button { color: inherit; }
 
 .form-message { margin-top: 17px; padding: 12px 14px; border-radius: 9px; background: #eaf7f1; color: var(--success); font-size: 13px; line-height: 1.45; }
 .form-message.is-error { background: #fff0f2; color: var(--danger); }
+.security-page { min-height:100vh; overflow:auto; padding:42px 18px; background:var(--canvas); }
+.security-shell { width:min(720px,100%); margin:auto; padding:34px; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:var(--shadow); }
+.security-shell h1 { margin:8px 0; font-family:Manrope,"Segoe UI",sans-serif; font-size:34px; }
+.security-intro { margin:0 0 24px; color:var(--muted); line-height:1.6; }
+.session-list { display:grid; gap:10px; margin:22px 0; }
+.session-card { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:15px; border:1px solid var(--line); border-radius:11px; background:var(--page); }
+.session-card strong,.session-card small { display:block; }
+.session-card strong { font-size:13px; }
+.session-card small { margin-top:5px; color:var(--muted); font-size:11px; }
+.session-card button { padding:8px 11px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--danger); font-weight:700; cursor:pointer; }
+.security-actions { display:flex; align-items:center; gap:16px; margin-top:20px; }
+.security-actions .primary-button { width:auto; padding:0 18px; }
+.security-shell>.text-button { display:inline-block; margin-top:20px; }
 .legal { margin: 25px auto 0; color: #9aa0b0; font-size: 11px; line-height: 1.6; text-align: center; }
 .legal a { color: #737a8e; }
 
@@ -232,6 +245,9 @@ button { color: inherit; }
   .mobile-brand { display: inline-flex; }
   .form-wrap { max-width: 520px; }
   .form-header h2 { font-size: 30px; }
+  .security-shell { padding:24px 18px; }
+  .security-actions,.session-card { align-items:stretch; flex-direction:column; }
+  .security-actions .primary-button { width:100%; }
 }
 
 @media (max-height: 790px) and (min-width: 721px) {

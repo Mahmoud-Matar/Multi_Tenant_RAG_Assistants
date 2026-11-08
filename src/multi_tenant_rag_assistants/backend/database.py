@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS rag_users (
     tenant_id BIGINT,
     role VARCHAR(32) NOT NULL DEFAULT 'user',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    email_verified_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    password_changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_rag_users_tenant
@@ -58,6 +62,10 @@ CREATE TABLE IF NOT EXISTS rag_users (
 
 ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS username VARCHAR(80);
 ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'user';
+ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+ALTER TABLE rag_users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE rag_users ALTER COLUMN email DROP NOT NULL;
 ALTER TABLE rag_users ALTER COLUMN tenant_id DROP NOT NULL;
 
@@ -77,6 +85,50 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_rag_users_tenant_id ON rag_users (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_users_username_lower
     ON rag_users (LOWER(username)) WHERE username IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES rag_users(id) ON DELETE CASCADE,
+    tenant_id BIGINT REFERENCES rag_tenants(id) ON DELETE CASCADE,
+    issued_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_at TIMESTAMPTZ,
+    ip_address VARCHAR(64),
+    user_agent VARCHAR(512),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+    ON auth_sessions (user_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
+    ON auth_sessions (user_id, revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_action_tokens (
+    token_hash CHAR(64) PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES rag_users(id) ON DELETE CASCADE,
+    purpose VARCHAR(32) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_ip VARCHAR(64),
+    CONSTRAINT chk_auth_action_token_purpose CHECK (
+        purpose IN ('email_verification', 'password_reset')
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user
+    ON auth_action_tokens (user_id, purpose, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
+    action VARCHAR(40) NOT NULL,
+    subject_hash CHAR(64) NOT NULL,
+    window_started_at TIMESTAMPTZ NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    blocked_until TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (action, subject_hash)
+);
 
 CREATE TABLE IF NOT EXISTS tenant_domain_contracts (
     id VARCHAR(40) PRIMARY KEY,

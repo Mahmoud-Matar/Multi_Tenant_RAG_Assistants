@@ -17,7 +17,7 @@ from multi_tenant_rag_assistants.backend.database import connect
 class TenantDomainContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.client_context = TestClient(app)
+        cls.client_context = TestClient(app, headers={"Origin": "http://testserver"})
         cls.client = cls.client_context.__enter__()
 
     @classmethod
@@ -25,6 +25,8 @@ class TenantDomainContractTests(unittest.TestCase):
         cls.client_context.__exit__(None, None, None)
 
     def setUp(self) -> None:
+        with connect() as connection:
+            connection.execute("DELETE FROM auth_rate_limits")
         self.client.post("/api/auth/logout")
         login = self.client.post(
             "/api/auth/login",
