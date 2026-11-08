@@ -23,8 +23,11 @@ def _incident_query(where: str) -> str:
                i.category, i.severity, i.status, i.document_id, i.version_id,
                i.chunk_id, i.evidence_hash, i.evidence_excerpt, i.indicators,
                i.detected_at, i.updated_at, i.acknowledged_at, i.resolved_at,
+               i.acknowledged_by, i.resolved_by,
                acknowledger.username AS acknowledged_by_username,
-               resolver.username AS resolved_by_username
+               acknowledger.email AS acknowledged_by_email,
+               resolver.username AS resolved_by_username,
+               resolver.email AS resolved_by_email
         FROM rag_security_incidents i
         JOIN rag_tenants t ON t.id = i.tenant_id
         LEFT JOIN rag_users u ON u.id = i.actor_id

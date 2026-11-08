@@ -29,13 +29,19 @@ blocked response does not disclose which rule matched or echo the suspicious tex
 Each row in `rag_security_incidents` includes:
 
 - incident ID, status, category, severity, and detection/update timestamps;
-- tenant, initiating user, request ID, and active contract ID/version;
+- tenant, initiating user's username and email, request ID, and active contract
+  ID/version;
 - source (`user_query` or `retrieved_content`);
 - document, version, and chunk IDs when retrieved evidence caused the finding;
 - machine-readable indicator names;
 - a SHA-256 evidence hash for correlation; and
 - a short evidence excerpt with email addresses, long token-like values, and
   concealed Unicode redacted or visibly marked.
+
+Acknowledgment and resolution history records the responsible manager or
+administrator account, including its username, email when present, and action
+timestamp. Accounts without an email are shown explicitly as having no email on
+the account rather than leaving the responder ambiguous.
 
 Raw questions are not added to the query audit. Incident excerpts are deliberately
 limited, but they can still contain business information and must be treated as

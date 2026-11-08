@@ -94,12 +94,7 @@ class RAGService:
             )
             return response
         try:
-            domain = context.contract["domain"]
-            normalized = screen_query(
-                question,
-                allowed_topics=domain.get("allowed_topics"),
-                excluded_topics=domain.get("excluded_topics"),
-            )
+            normalized = screen_query(question)
         except ValueError:
             self.audit_writer(
                 request_id=request_id,
@@ -114,7 +109,6 @@ class RAGService:
             raise
         chunks = []
         try:
-            abstention = domain.get("refusal_message", ABSTENTION)
             chunks = self.retriever.retrieve(context, normalized, top_k)
             incident_ids = []
             incident_categories = set()
@@ -157,7 +151,7 @@ class RAGService:
                 response = RAGQueryResponse(
                     request_id=request_id,
                     policy_version=context.contract_version,
-                    answer=abstention,
+                    answer=ABSTENTION,
                     citations=[],
                     abstained=True,
                     retrieved_chunk_count=0,
@@ -168,18 +162,12 @@ class RAGService:
                     model=context.contract["models"]["chat_model"]
                 )
                 generated = generator.generate(normalized, chunks)
-                citations = validate_citations(
-                    generated.answer,
-                    chunks,
-                    minimum_support=context.contract["thresholds"][
-                        "minimum_citation_support"
-                    ],
-                )
+                citations = validate_citations(generated.answer, chunks)
                 if not citations:
                     response = RAGQueryResponse(
                         request_id=request_id,
                         policy_version=context.contract_version,
-                        answer=abstention,
+                        answer=ABSTENTION,
                         citations=[],
                         abstained=True,
                         retrieved_chunk_count=len(chunks),

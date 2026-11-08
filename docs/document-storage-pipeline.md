@@ -75,10 +75,10 @@ Each chunk receives backend-generated metadata:
 }
 ```
 
-The same embedding model and chunk settings are stored on the PostgreSQL version
-record. Retrieval requires the active contract's embedding model to match both
-PostgreSQL and Chroma metadata; changing the model therefore requires a reindex
-instead of silently mixing incompatible vector spaces.
+The embedding model and chunk settings are retained on the PostgreSQL version and
+Chroma metadata for traceability. The restored RAG retriever does not enforce
+contract/model equality during retrieval; deployments should still reindex before
+changing the configured embedding model to avoid mixing vector spaces.
 
 Retrieval applies mandatory Chroma filters and then verifies every returned
 `version_id` against active PostgreSQL records. Physical collection sharing is

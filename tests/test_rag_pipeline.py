@@ -239,7 +239,7 @@ class RAGPipelineTests(unittest.TestCase):
         self.assertEqual([chunk.document_id for chunk in chunks], [self.doc_a])
         self.assertNotIn("launch code", " ".join(chunk.text for chunk in chunks))
 
-    def test_hybrid_reranking_promotes_lexically_relevant_authorized_chunk(self) -> None:
+    def test_vector_retrieval_preserves_distance_order_without_lexical_reranking(self) -> None:
         class CandidateCollection:
             @staticmethod
             def query(**_):
@@ -273,7 +273,7 @@ class RAGPipelineTests(unittest.TestCase):
         chunks = retriever.retrieve(
             self.context, "Which hardware security key is required?", top_k=1
         )
-        self.assertEqual(chunks[0].chunk_id, "security-key-chunk")
+        self.assertEqual(chunks[0].chunk_id, "generic-chunk")
 
     def test_configured_chat_model_is_gpt_4o_mini(self) -> None:
         self.assertEqual(OpenAIAnswerGenerator().model, "gpt-4o-mini")
@@ -346,12 +346,12 @@ class RAGPipelineTests(unittest.TestCase):
         self.assertTrue(unsupported.abstained)
         self.assertEqual(unsupported.answer, ABSTENTION)
 
-        weak_support = RAGService(
+        cited_answer = RAGService(
             retriever=type("Retriever", (), {"retrieve": lambda *_: [chunk]})(),
             generator=StubGenerator("The annual budget increased by fifty percent [1]."),
             audit_writer=lambda **_: None,
         ).ask(self.context, "What happened to the annual budget?")
-        self.assertTrue(weak_support.abstained)
+        self.assertFalse(cited_answer.abstained)
 
     def test_suspicious_user_prompt_is_blocked_and_reported_without_llm(self) -> None:
         generator = StubGenerator("This must not be called")
@@ -432,6 +432,7 @@ class RAGPipelineTests(unittest.TestCase):
             self.assertEqual(
                 incident["actor_username"], self.user_email.split("@", 1)[0]
             )
+            self.assertEqual(incident["actor_email"], self.user_email)
             self.assertEqual(incident["source"], "retrieved_content")
             self.assertEqual(incident["document_id"], self.doc_a)
             self.assertEqual(incident["chunk_id"], poisoned.chunk_id)
@@ -457,6 +458,29 @@ class RAGPipelineTests(unittest.TestCase):
             )
             self.assertEqual(admin_incident["tenant_slug"], self.slug_a)
             self.assertEqual(admin_incident["status"], "acknowledged")
+            self.assertEqual(
+                admin_incident["acknowledged_by_username"],
+                self.manager_email.split("@", 1)[0],
+            )
+            self.assertEqual(
+                admin_incident["acknowledged_by_email"], self.manager_email
+            )
+            self.assertIsNotNone(admin_incident["acknowledged_at"])
+
+            resolved = client.patch(
+                f"/api/admin/security/incidents/{incident['id']}",
+                json={"status": "resolved"},
+            )
+            self.assertEqual(resolved.status_code, 200, resolved.text)
+            resolved_listing = client.get("/api/admin/security/incidents?status=resolved")
+            resolved_incident = next(
+                item
+                for item in resolved_listing.json()
+                if item["request_id"] == response.request_id
+            )
+            self.assertEqual(resolved_incident["resolved_by_username"], "admin")
+            self.assertIsNone(resolved_incident["resolved_by_email"])
+            self.assertIsNotNone(resolved_incident["resolved_at"])
 
     def test_invalid_tenant_context_is_rejected(self) -> None:
         with self.assertRaises(HTTPException) as raised:

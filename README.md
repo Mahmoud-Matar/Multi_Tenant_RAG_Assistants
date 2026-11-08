@@ -80,9 +80,10 @@ or chat requests until an administrator approves and activates the contract.
 Contract activation activates the tenant atomically; manual tenant activation is
 rejected when no valid active contract exists.
 
-The RAG path hybrid-reranks only tenant- and ACL-authorized candidates, validates
-sentence-level citation support, and screens both questions and retrieved chunks
-for prompt injection, tenant escape, exfiltration, poisoning, and hidden text.
+The restored RAG path uses the original vector-distance retrieval and citation
+validation while preserving tenant and ACL authorization. It screens both questions
+and retrieved chunks for prompt injection, tenant escape, exfiltration, poisoning,
+and hidden text.
 Flagged content never reaches answer generation. Instead, a redacted in-app report
 is created for the tenant's managers and platform administrators, who can
 acknowledge or resolve it from their dashboards. External email/SIEM delivery is

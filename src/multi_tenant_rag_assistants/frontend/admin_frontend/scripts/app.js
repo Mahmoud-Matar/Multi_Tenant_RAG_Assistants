@@ -529,11 +529,32 @@ const renderSecurityIncidents = (incidents) => {
       badges.textContent = `${incident.severity} · ${incident.status}`;
       heading.append(title, badges);
       const summary = document.createElement("p");
-      summary.textContent = `${incident.actor_username || incident.actor_email || "Unknown user"} · ${incident.tenant_name} · ${new Date(incident.detected_at).toLocaleString()}`;
+      const actorIdentity = [incident.actor_username, incident.actor_email]
+        .filter(Boolean)
+        .join(" · ") || "Unknown user";
+      summary.textContent = `${actorIdentity} · ${incident.tenant_name} · ${new Date(incident.detected_at).toLocaleString()}`;
       const details = document.createElement("p");
       details.textContent = `${incident.source.replaceAll("_", " ")} · policy v${incident.contract_version} · indicators: ${incident.indicators.join(", ")}`;
       const excerpt = document.createElement("code");
       excerpt.textContent = incident.evidence_excerpt || "No displayable evidence excerpt.";
+      const responseHistory = document.createElement("p");
+      const responseEvents = [];
+      if (incident.acknowledged_at) {
+        const responder = [
+          incident.acknowledged_by_username,
+          incident.acknowledged_by_email || "no email on account",
+        ].filter(Boolean).join(" · ");
+        responseEvents.push(`Acknowledged by ${responder} on ${new Date(incident.acknowledged_at).toLocaleString()}`);
+      }
+      if (incident.resolved_at) {
+        const responder = [
+          incident.resolved_by_username,
+          incident.resolved_by_email || "no email on account",
+        ].filter(Boolean).join(" · ");
+        responseEvents.push(`Resolved by ${responder} on ${new Date(incident.resolved_at).toLocaleString()}`);
+      }
+      responseHistory.textContent = responseEvents.join(" | ");
+      responseHistory.hidden = responseEvents.length === 0;
       const actions = document.createElement("div");
       actions.className = "document-actions";
       if (incident.status === "open") {
@@ -550,7 +571,7 @@ const renderSecurityIncidents = (incidents) => {
         resolve.addEventListener("click", () => updateIncidentStatus(incident, "resolved"));
         actions.append(resolve);
       }
-      report.append(heading, summary, details, excerpt, actions);
+      report.append(heading, summary, details, excerpt, responseHistory, actions);
       return report;
     }),
   );

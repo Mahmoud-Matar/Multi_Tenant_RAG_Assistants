@@ -931,34 +931,20 @@ def search_tenant_knowledge(
         ).fetchone()
         if tenant is None:
             return []
-        try:
-            contract_row, contract = get_active_contract(connection, tenant_id)
-        except ContractUnavailableError:
-            return []
-        k = min(k, contract.thresholds.top_k)
         active = connection.execute(
             """
             SELECT v.id
             FROM rag_document_versions v
             JOIN rag_documents d ON d.id = v.document_id
             WHERE d.tenant_id = %s AND d.status = 'active'
-              AND v.ingestion_status = 'active' AND v.contract_id = %s
-              AND v.embedding_model = %s
-              AND d.access_scope = ANY(%s)
+              AND v.ingestion_status = 'active' AND d.access_scope = ANY(%s)
             """,
-            (
-                tenant_id,
-                contract_row["id"],
-                contract.models.embedding_model,
-                list(access_scopes),
-            ),
+            (tenant_id, list(access_scopes)),
         ).fetchall()
     active_ids = {row["id"] for row in active}
     if not active_ids:
         return []
-    query_embedding = OpenAIEmbeddings(
-        model=contract.models.embedding_model
-    ).embed_query(query)
+    query_embedding = OpenAIEmbeddings(model=EMBEDDING_MODEL).embed_query(query)
     result = chroma_collection().query(
         query_embeddings=[query_embedding],
         n_results=max(k * 3, k),
@@ -967,8 +953,6 @@ def search_tenant_knowledge(
                 {"tenant_id": tenant_key(tenant)},
                 {"status": "active"},
                 {"access_scope": {"$in": list(access_scopes)}},
-                {"contract_id": contract_row["id"]},
-                {"embedding_model": contract.models.embedding_model},
             ]
         },
         include=["documents", "metadatas", "distances"],
@@ -977,12 +961,7 @@ def search_tenant_knowledge(
     for text, metadata, distance in zip(
         result["documents"][0], result["metadatas"][0], result["distances"][0]
     ):
-        if (
-            metadata["version_id"] not in active_ids
-            or metadata.get("contract_id") != contract_row["id"]
-            or metadata.get("embedding_model") != contract.models.embedding_model
-            or float(distance) > contract.thresholds.max_distance
-        ):
+        if metadata["version_id"] not in active_ids:
             continue
         matches.append({"text": text, "metadata": metadata, "distance": distance})
         if len(matches) == k:

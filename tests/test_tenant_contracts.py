@@ -9,7 +9,6 @@ from argon2 import PasswordHasher
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from multi_tenant_rag_assistants.RAG.screening import screen_query
 from multi_tenant_rag_assistants.RAG.security import build_security_context
 from multi_tenant_rag_assistants.backend.auth import app
 from multi_tenant_rag_assistants.backend.database import connect
@@ -194,28 +193,6 @@ class TenantDomainContractTests(unittest.TestCase):
         self.assertEqual(
             raised.exception.detail, "The tenant policy is unavailable or invalid."
         )
-
-    def test_domain_policy_screening_is_deterministic(self) -> None:
-        self.assertEqual(
-            screen_query(
-                "Where is the employee policy?",
-                allowed_topics=["employee policy"],
-                excluded_topics=["medical advice"],
-            ),
-            "Where is the employee policy?",
-        )
-        with self.assertRaisesRegex(ValueError, "outside the tenant"):
-            screen_query(
-                "Give me medical advice",
-                allowed_topics=["employee policy"],
-                excluded_topics=["medical advice"],
-            )
-        with self.assertRaisesRegex(ValueError, "outside the tenant"):
-            screen_query(
-                "What is the weather?",
-                allowed_topics=["employee policy"],
-            )
-
 
 if __name__ == "__main__":
     unittest.main()

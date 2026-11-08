@@ -15,8 +15,7 @@ The implementation lives in `src/multi_tenant_rag_assistants/RAG/`:
 - `security.py` revalidates the authenticated user, active tenant, role, and scopes.
 - `screening.py` normalizes and validates the question.
 - `retrieval.py` constructs the mandatory tenant filter before querying ChromaDB,
-  then independently checks document and version authorization in PostgreSQL and
-  hybrid-reranks authorized candidates with vector similarity plus BM25/token overlap.
+  then independently checks document and version authorization in PostgreSQL.
 - `threats.py` detects prompt-injection, tenant-escape, exfiltration, poisoning,
   hidden-markup, and concealed-Unicode indicators without invoking an LLM.
 - `incidents.py` persists privacy-conscious security reports for blocked requests.
@@ -36,8 +35,8 @@ session and revalidated against active PostgreSQL records.
 The security context also requires the tenant's active Tenant Domain Contract.
 The contract's canonical JSON is SHA-256 hashed and HMAC-signed. Missing, invalid,
 or tampered policy fails closed before retrieval. The active version supplies role
-capabilities, scopes, domain topics, refusal language, retrieval thresholds, and
-approved model routes.
+capabilities and access scopes. The restored RAG path continues to use its original
+environment-configured retrieval limits and distance threshold.
 
 New tenants remain inactive during onboarding. Their initial contract is a draft,
 and they cannot reach this query pipeline until that contract is approved and
@@ -51,16 +50,14 @@ ChromaDB is always queried with a server-built filter resembling:
         {"tenant_id": {"$eq": trusted_context.tenant_key}},
         {"status": {"$eq": "active"}},
         {"access_scope": {"$in": trusted_context.access_scopes}},
-        {"contract_id": {"$eq": trusted_context.contract_id}},
     ]
 }
 ```
 
 There is no unfiltered search followed by tenant filtering. Returned metadata is
 still treated as untrusted: every result must match an active document's current
-active version, allowed scope, active contract, and embedding model in PostgreSQL
-before it can become a retrieval candidate. Only authorized candidates are
-hybrid-reranked, so lexical ranking cannot reintroduce cross-tenant content.
+active version and allowed scope in PostgreSQL before it can become a retrieval
+candidate. Results remain in vector-distance order; no lexical reranking is applied.
 
 Regular users can retrieve `employee` documents. Tenant managers can retrieve
 `employee` and `management` documents belonging to their own tenant. Platform
@@ -97,8 +94,8 @@ The generator is instructed to use only authorized evidence and cite it inline a
 `[1]`, `[2]`, and so on. The backend validates every cited number. When retrieval
 finds no sufficiently relevant authorized chunks, or the generated response has no
 valid citation, the service returns a fixed abstention instead of an unsupported
-answer. Each substantive sentence must cite an in-range evidence chunk and meet
-the active contract's minimum lexical support threshold.
+answer. Citation validation checks that referenced source numbers exist; it does
+not perform the removed sentence-level lexical-support calculation.
 
 The response includes display-safe citation records containing the original
 filename, document/version/chunk identifiers, and a short excerpt. The frontend
