@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Chat with Atlas and manage your tenant workspace." />
     <title>Atlas | Tenant manager</title>
-    <link rel="stylesheet" href="/manager-assets/styles/main.css?v=20261016-document-pipeline" />
+    <link rel="stylesheet" href="/manager-assets/styles/main.css?v=20261107-rag-security" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,6 +26,10 @@
           <button type="button" data-view="management">
             <svg viewBox="0 0 24 24"><path d="M4 21V8l8-5 8 5v13M8 21v-6h8v6" /></svg>
             <span>Tenant management</span>
+          </button>
+          <button type="button" data-view="security">
+            <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6zM12 8v5m0 3h.01" /></svg>
+            <span>Security reports <b data-security-open-count></b></span>
           </button>
         </nav>
 
@@ -74,6 +78,15 @@
           </div>
         </section>
 
+        <section class="management-view" data-panel="security" hidden>
+          <div class="management-container">
+            <div class="management-heading"><div><p class="eyebrow">Incident response</p><h1>Security reports</h1><span>Review suspicious prompts and retrieved content detected in your tenant.</span></div><span class="manager-badge" data-security-count>—</span></div>
+            <section class="panel">
+              <div class="incident-list" data-security-incidents><p class="empty-state">Loading security reports…</p></div>
+            </section>
+          </div>
+        </section>
+
         <section class="management-view" data-panel="management" hidden>
           <div class="management-container">
             <div class="management-heading"><div><p class="eyebrow">Tenant administration</p><h1 data-management-title>Workspace management</h1><span>Manage your tenant’s knowledge and member roles.</span></div><span class="manager-badge">Tenant manager</span></div>
@@ -110,6 +123,6 @@
       </form>
     </dialog>
     <div class="toast" role="status" aria-live="polite" data-toast hidden></div>
-    <script type="module" src="/manager-assets/scripts/app.js?v=20261017-rag"></script>
+    <script type="module" src="/manager-assets/scripts/app.js?v=20261107-rag-security"></script>
   </body>
 </html>

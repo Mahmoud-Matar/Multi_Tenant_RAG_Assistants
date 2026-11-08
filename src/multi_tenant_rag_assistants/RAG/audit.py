@@ -28,8 +28,9 @@ def write_query_audit(
             """
             INSERT INTO rag_query_audit
                 (id, tenant_id, actor_id, query_hash, query_length, outcome,
-                 retrieved_chunk_count, cited_chunk_count, latency_ms, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 retrieved_chunk_count, cited_chunk_count, latency_ms,
+                 contract_id, contract_version, details)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 request_id,
@@ -41,6 +42,8 @@ def write_query_audit(
                 retrieved_count,
                 cited_count,
                 latency_ms,
+                context.contract_id,
+                context.contract_version,
                 Jsonb(details or {}),
             ),
         )

@@ -6,6 +6,10 @@ from fastapi import HTTPException
 
 from multi_tenant_rag_assistants.backend.database import connect
 from multi_tenant_rag_assistants.backend.documents import tenant_key
+from multi_tenant_rag_assistants.backend.contracts import (
+    ContractUnavailableError,
+    get_active_contract,
+)
 
 from .models import SecurityContext
 
@@ -34,14 +38,27 @@ def build_security_context(user: dict) -> SecurityContext:
             """,
             (user_id, tenant_id, role),
         ).fetchone()
-    if membership is None:
-        raise HTTPException(status_code=403, detail="The tenant context is invalid or inactive.")
-
-    scopes = ("employee", "management") if role == "tenant_manager" else ("employee",)
+        if membership is None:
+            raise HTTPException(status_code=403, detail="The tenant context is invalid or inactive.")
+        try:
+            contract_row, contract = get_active_contract(connection, tenant_id)
+        except ContractUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The tenant policy is unavailable or invalid.",
+            ) from exc
+    role_policy = contract.roles.get(role)
+    if role_policy is None or "chat" not in role_policy.capabilities:
+        raise HTTPException(status_code=403, detail="Chat is not enabled by the tenant policy.")
+    scopes = tuple(role_policy.access_scopes)
     return SecurityContext(
         user_id=user_id,
         tenant_id=tenant_id,
         tenant_key=tenant_key(membership),
         role=role,
         access_scopes=scopes,
+        contract_id=contract_row["id"],
+        contract_version=contract_row["version"],
+        contract_hash=contract_row["contract_hash"],
+        contract=contract.model_dump(mode="json"),
     )

@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from .database import PROJECT_ROOT, connect
+from .contracts import ContractUnavailableError, get_active_contract
 
 
 STORAGE_ROOT = Path(
@@ -68,6 +69,8 @@ def document_payload(row: dict) -> dict:
         "access_scope": row["access_scope"],
         "uploaded_by": row["uploaded_by"],
         "created_at": row["created_at"],
+        "contract_id": row.get("contract_id"),
+        "contract_version": row.get("contract_version"),
         "version": {
             "id": row["version_id"],
             "version_number": row["version_number"],
@@ -79,6 +82,11 @@ def document_payload(row: dict) -> dict:
             "chunk_count": row["chunk_count"],
             "failure_reason": row["failure_reason"],
             "created_at": row["version_created_at"],
+            "contract_id": row.get("version_contract_id"),
+            "contract_version": row.get("version_contract_version"),
+            "embedding_model": row.get("embedding_model"),
+            "chunk_size": row.get("chunk_size"),
+            "chunk_overlap": row.get("chunk_overlap"),
         },
     }
 
@@ -93,12 +101,15 @@ def audit(
     document_id: str | None = None,
     version_id: str | None = None,
     details: dict | None = None,
+    contract_id: str | None = None,
+    contract_version: int | None = None,
 ) -> None:
     connection.execute(
         """
         INSERT INTO rag_document_audit
-            (tenant_id, document_id, version_id, actor_id, action, outcome, details)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (tenant_id, document_id, version_id, actor_id, action, outcome,
+             contract_id, contract_version, details)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             tenant_id,
@@ -107,6 +118,8 @@ def audit(
             actor_id,
             action,
             outcome,
+            contract_id,
+            contract_version,
             Jsonb(details or {}),
         ),
     )
@@ -119,7 +132,9 @@ def checked_storage_path(storage_key: str) -> Path:
     return path
 
 
-async def write_quarantine_file(upload: UploadFile, destination: Path) -> tuple[int, str]:
+async def write_quarantine_file(
+    upload: UploadFile, destination: Path, *, max_file_bytes: int = MAX_FILE_BYTES
+) -> tuple[int, str]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     size = 0
@@ -127,9 +142,9 @@ async def write_quarantine_file(upload: UploadFile, destination: Path) -> tuple[
         with destination.open("xb") as output:
             while chunk := await upload.read(1024 * 1024):
                 size += len(chunk)
-                if size > MAX_FILE_BYTES:
+                if size > max_file_bytes:
                     raise DocumentValidationError(
-                        f"File exceeds the {MAX_FILE_BYTES // (1024 * 1024)} MB limit."
+                        f"File exceeds the {max_file_bytes // (1024 * 1024)} MB limit."
                     )
                 digest.update(chunk)
                 output.write(chunk)
@@ -231,8 +246,10 @@ def extract_text(path: Path, mime_type: str) -> str:
     raise RuntimeError("Unsupported document MIME type.")
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    return OpenAIEmbeddings(model=EMBEDDING_MODEL).embed_documents(texts)
+def embed_texts(
+    texts: list[str], model: str = EMBEDDING_MODEL
+) -> list[list[float]]:
+    return OpenAIEmbeddings(model=model).embed_documents(texts)
 
 
 def chroma_collection():
@@ -271,7 +288,8 @@ def process_document_version(version_id: str) -> None:
             """
             SELECT v.id AS version_id, v.document_id, v.version_number, v.storage_key,
                    v.mime_type, v.approval_status, v.ingestion_status,
-                   d.tenant_id, d.access_scope, t.slug
+                   d.tenant_id, d.access_scope, t.slug,
+                   v.contract_id, v.contract_version
             FROM rag_document_versions v
             JOIN rag_documents d ON d.id = v.document_id
             JOIN rag_tenants t ON t.id = d.tenant_id
@@ -285,6 +303,22 @@ def process_document_version(version_id: str) -> None:
             or row["approval_status"] != "approved"
             or row["ingestion_status"] not in {"queued", "failed"}
         ):
+            return
+        try:
+            active_contract_row, active_contract = get_active_contract(
+                connection, row["tenant_id"]
+            )
+        except ContractUnavailableError:
+            connection.execute(
+                "UPDATE rag_document_versions SET ingestion_status = 'failed', failure_reason = %s WHERE id = %s",
+                ("The tenant contract is unavailable or invalid.", version_id),
+            )
+            return
+        if active_contract_row["id"] != row["contract_id"]:
+            connection.execute(
+                "UPDATE rag_document_versions SET ingestion_status = 'failed', failure_reason = %s WHERE id = %s",
+                ("The document was queued under a contract that is no longer active.", version_id),
+            )
             return
         connection.execute(
             "UPDATE rag_document_versions SET ingestion_status = 'processing', failure_reason = NULL WHERE id = %s",
@@ -315,7 +349,7 @@ def process_document_version(version_id: str) -> None:
         chunks = [chunk for chunk in splitter.split_text(text) if chunk.strip()]
         if not chunks:
             raise RuntimeError("The document did not produce any searchable chunks.")
-        embeddings = embed_texts(chunks)
+        embeddings = embed_texts(chunks, active_contract.models.embedding_model)
         ids = [f"{version_id}_chunk_{index:06d}" for index in range(1, len(chunks) + 1)]
         metadata = [
             {
@@ -326,6 +360,11 @@ def process_document_version(version_id: str) -> None:
                 "chunk_id": chunk_id,
                 "access_scope": row["access_scope"],
                 "status": "active",
+                "contract_id": row["contract_id"],
+                "contract_version": row["contract_version"],
+                "embedding_model": active_contract.models.embedding_model,
+                "chunk_size": CHUNK_SIZE,
+                "chunk_overlap": CHUNK_OVERLAP,
             }
             for chunk_id in ids
         ]
@@ -363,10 +402,17 @@ def process_document_version(version_id: str) -> None:
                 """
                 UPDATE rag_documents
                 SET current_version = %s, storage_key = %s, status = 'active',
+                    contract_id = %s, contract_version = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
-                (row["version_number"], row["storage_key"], row["document_id"]),
+                (
+                    row["version_number"],
+                    row["storage_key"],
+                    row["contract_id"],
+                    row["contract_version"],
+                    row["document_id"],
+                ),
             )
             audit(
                 connection,
@@ -377,6 +423,8 @@ def process_document_version(version_id: str) -> None:
                 action="document_indexed",
                 outcome="success",
                 details={"chunk_count": len(ids), "collection": COLLECTION_NAME},
+                contract_id=row["contract_id"],
+                contract_version=row["contract_version"],
             )
         for old_version in active_versions:
             delete_vectors(tenant_storage_key, row["document_id"], old_version["id"])
@@ -411,6 +459,8 @@ def process_document_version(version_id: str) -> None:
                 action="document_indexing",
                 outcome="failed",
                 details={"reason": message},
+                contract_id=row["contract_id"],
+                contract_version=row["contract_version"],
             )
 
 
@@ -434,6 +484,17 @@ async def register_upload(
         ).fetchone()
         if tenant is None or not tenant["is_active"]:
             raise HTTPException(status_code=404, detail="Active tenant not found.")
+        try:
+            contract_row, contract = get_active_contract(connection, tenant_id)
+        except ContractUnavailableError as exc:
+            raise HTTPException(
+                status_code=503, detail="The tenant policy is unavailable or invalid."
+            ) from exc
+        if extension not in contract.knowledge.allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail="This file type is not allowed by the active tenant contract.",
+            )
         existing = None
         if document_id:
             existing = connection.execute(
@@ -460,7 +521,11 @@ async def register_upload(
     original_path = checked_storage_path(original_key)
 
     try:
-        size_bytes, checksum = await write_quarantine_file(upload, quarantine_path)
+        size_bytes, checksum = await write_quarantine_file(
+            upload,
+            quarantine_path,
+            max_file_bytes=min(MAX_FILE_BYTES, contract.knowledge.max_document_bytes),
+        )
         validate_file_content(quarantine_path, extension)
         scan_for_malware(quarantine_path)
         original_path.parent.mkdir(parents=True, exist_ok=True)
@@ -477,6 +542,8 @@ async def register_upload(
                 action="document_upload",
                 outcome="rejected",
                 details={"filename": original_filename, "reason": str(exc)},
+                contract_id=contract_row["id"],
+                contract_version=contract_row["version"],
             )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -523,8 +590,8 @@ async def register_upload(
                     """
                     INSERT INTO rag_documents
                         (id, tenant_id, original_filename, storage_key, current_version,
-                         status, access_scope, uploaded_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'employee', %s)
+                         status, access_scope, uploaded_by, contract_id, contract_version)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'employee', %s, %s, %s)
                     """,
                     (
                         document_id,
@@ -534,6 +601,8 @@ async def register_upload(
                         version_number,
                         document_status,
                         actor["id"],
+                        contract_row["id"],
+                        contract_row["version"],
                     ),
                 )
             elif existing["status"] != "active":
@@ -545,10 +614,12 @@ async def register_upload(
                 """
                 INSERT INTO rag_document_versions
                     (id, document_id, version_number, checksum, storage_key, mime_type,
-                     size_bytes, approval_status, ingestion_status, approved_by, approved_at)
+                     size_bytes, approval_status, ingestion_status, approved_by, approved_at,
+                     contract_id, contract_version, embedding_model, chunk_size, chunk_overlap)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
                         CASE WHEN %s THEN %s ELSE NULL END,
-                        CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END)
+                        CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
+                        %s, %s, %s, %s, %s)
                 """,
                 (
                     version_id,
@@ -563,6 +634,11 @@ async def register_upload(
                     approved,
                     actor["id"],
                     approved,
+                    contract_row["id"],
+                    contract_row["version"],
+                    contract.models.embedding_model,
+                    CHUNK_SIZE,
+                    CHUNK_OVERLAP,
                 ),
             )
             audit(
@@ -579,6 +655,8 @@ async def register_upload(
                     "checksum": checksum,
                     "approval_status": approval_status,
                 },
+                contract_id=contract_row["id"],
+                contract_version=contract_row["version"],
             )
     except Exception:
         original_path.unlink(missing_ok=True)
@@ -594,6 +672,8 @@ async def register_upload(
         "original_filename": original_filename,
         "size_bytes": size_bytes,
         "checksum": checksum,
+        "contract_id": contract_row["id"],
+        "contract_version": contract_row["version"],
     }
 
 
@@ -603,9 +683,13 @@ def list_documents(tenant_id: int) -> list[dict]:
             """
             SELECT d.id, d.tenant_id, d.original_filename, d.current_version, d.status,
                    d.access_scope, d.uploaded_by, d.created_at,
+                   d.contract_id, d.contract_version,
                    v.id AS version_id, v.version_number, v.checksum, v.mime_type,
                    v.size_bytes, v.approval_status, v.ingestion_status, v.chunk_count,
-                   v.failure_reason, v.created_at AS version_created_at
+                   v.failure_reason, v.created_at AS version_created_at,
+                   v.contract_id AS version_contract_id,
+                   v.contract_version AS version_contract_version,
+                   v.embedding_model, v.chunk_size, v.chunk_overlap
             FROM rag_documents d
             JOIN LATERAL (
                 SELECT * FROM rag_document_versions
@@ -624,7 +708,7 @@ def approve_document_version(version_id: str, administrator: dict) -> dict:
     with connect() as connection:
         version = connection.execute(
             """
-            SELECT v.id, v.document_id, d.tenant_id
+            SELECT v.id, v.document_id, v.contract_id, v.contract_version, d.tenant_id
             FROM rag_document_versions v
             JOIN rag_documents d ON d.id = v.document_id
             WHERE v.id = %s AND v.approval_status = 'pending' AND d.status <> 'deleted'
@@ -662,6 +746,8 @@ def approve_document_version(version_id: str, administrator: dict) -> dict:
             version_id=version_id,
             action="document_approval",
             outcome="approved",
+            contract_id=version["contract_id"],
+            contract_version=version["contract_version"],
         )
     return {"version_id": version_id, "status": "queued"}
 
@@ -672,7 +758,8 @@ def reject_document_version(
     with connect() as connection:
         version = connection.execute(
             """
-            SELECT v.id, v.document_id, v.storage_key, d.tenant_id, t.slug
+            SELECT v.id, v.document_id, v.storage_key, v.contract_id,
+                   v.contract_version, d.tenant_id, t.slug
             FROM rag_document_versions v
             JOIN rag_documents d ON d.id = v.document_id
             JOIN rag_tenants t ON t.id = d.tenant_id
@@ -715,6 +802,8 @@ def reject_document_version(
             action="document_approval",
             outcome="rejected",
             details={"reason": reason},
+            contract_id=version["contract_id"],
+            contract_version=version["contract_version"],
         )
     return {"version_id": version_id, "status": "rejected"}
 
@@ -723,7 +812,7 @@ def revoke_document(document_id: str, tenant_id: int, actor: dict) -> None:
     with connect() as connection:
         document = connection.execute(
             """
-            SELECT d.id, d.tenant_id, t.slug
+            SELECT d.id, d.tenant_id, d.contract_id, d.contract_version, t.slug
             FROM rag_documents d
             JOIN rag_tenants t ON t.id = d.tenant_id
             WHERE d.id = %s AND d.tenant_id = %s AND d.status <> 'deleted'
@@ -749,6 +838,8 @@ def revoke_document(document_id: str, tenant_id: int, actor: dict) -> None:
             action="document_revocation",
             outcome="success",
             details={"originals_retained": True},
+            contract_id=document["contract_id"],
+            contract_version=document["contract_version"],
         )
     delete_vectors(tenant_key(document), document_id)
 
@@ -757,6 +848,14 @@ def queue_reindex(document_id: str, tenant_id: int, actor: dict) -> dict:
     """Clone the active version so reindexing cannot interrupt current retrieval."""
     version_id = f"ver_{uuid4().hex[:16]}"
     with connect() as connection:
+        try:
+            contract_row, active_contract = get_active_contract(
+                connection, tenant_id, lock=True
+            )
+        except ContractUnavailableError as exc:
+            raise HTTPException(
+                status_code=503, detail="The tenant policy is unavailable or invalid."
+            ) from exc
         current = connection.execute(
             """
             SELECT d.id AS document_id, d.tenant_id, d.current_version,
@@ -780,9 +879,10 @@ def queue_reindex(document_id: str, tenant_id: int, actor: dict) -> dict:
             """
             INSERT INTO rag_document_versions
                 (id, document_id, version_number, checksum, storage_key, mime_type,
-                 size_bytes, approval_status, ingestion_status, approved_by, approved_at)
+                 size_bytes, approval_status, ingestion_status, approved_by, approved_at,
+                 contract_id, contract_version, embedding_model, chunk_size, chunk_overlap)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'approved', 'queued', %s,
-                    CURRENT_TIMESTAMP)
+                    CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
             """,
             (
                 version_id,
@@ -793,6 +893,11 @@ def queue_reindex(document_id: str, tenant_id: int, actor: dict) -> dict:
                 current["mime_type"],
                 current["size_bytes"],
                 actor["id"],
+                contract_row["id"],
+                contract_row["version"],
+                active_contract.models.embedding_model,
+                CHUNK_SIZE,
+                CHUNK_OVERLAP,
             ),
         )
         audit(
@@ -804,6 +909,8 @@ def queue_reindex(document_id: str, tenant_id: int, actor: dict) -> dict:
             action="document_reindex",
             outcome="queued",
             details={"source_version": current["current_version"]},
+            contract_id=contract_row["id"],
+            contract_version=contract_row["version"],
         )
     return {
         "document_id": document_id,
@@ -824,20 +931,34 @@ def search_tenant_knowledge(
         ).fetchone()
         if tenant is None:
             return []
+        try:
+            contract_row, contract = get_active_contract(connection, tenant_id)
+        except ContractUnavailableError:
+            return []
+        k = min(k, contract.thresholds.top_k)
         active = connection.execute(
             """
             SELECT v.id
             FROM rag_document_versions v
             JOIN rag_documents d ON d.id = v.document_id
             WHERE d.tenant_id = %s AND d.status = 'active'
-              AND v.ingestion_status = 'active' AND d.access_scope = ANY(%s)
+              AND v.ingestion_status = 'active' AND v.contract_id = %s
+              AND v.embedding_model = %s
+              AND d.access_scope = ANY(%s)
             """,
-            (tenant_id, list(access_scopes)),
+            (
+                tenant_id,
+                contract_row["id"],
+                contract.models.embedding_model,
+                list(access_scopes),
+            ),
         ).fetchall()
     active_ids = {row["id"] for row in active}
     if not active_ids:
         return []
-    query_embedding = OpenAIEmbeddings(model=EMBEDDING_MODEL).embed_query(query)
+    query_embedding = OpenAIEmbeddings(
+        model=contract.models.embedding_model
+    ).embed_query(query)
     result = chroma_collection().query(
         query_embeddings=[query_embedding],
         n_results=max(k * 3, k),
@@ -846,6 +967,8 @@ def search_tenant_knowledge(
                 {"tenant_id": tenant_key(tenant)},
                 {"status": "active"},
                 {"access_scope": {"$in": list(access_scopes)}},
+                {"contract_id": contract_row["id"]},
+                {"embedding_model": contract.models.embedding_model},
             ]
         },
         include=["documents", "metadatas", "distances"],
@@ -854,7 +977,12 @@ def search_tenant_knowledge(
     for text, metadata, distance in zip(
         result["documents"][0], result["metadatas"][0], result["distances"][0]
     ):
-        if metadata["version_id"] not in active_ids:
+        if (
+            metadata["version_id"] not in active_ids
+            or metadata.get("contract_id") != contract_row["id"]
+            or metadata.get("embedding_model") != contract.models.embedding_model
+            or float(distance) > contract.thresholds.max_distance
+        ):
             continue
         matches.append({"text": text, "metadata": metadata, "distance": distance})
         if len(matches) == k:

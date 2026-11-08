@@ -188,14 +188,19 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertIn("data-theme-toggle", admin_page.text)
         self.assertIn('data-view="admins"', admin_page.text)
         self.assertIn('data-panel="admins"', admin_page.text)
+        self.assertIn('data-view="contracts"', admin_page.text)
+        self.assertIn('data-panel="contracts"', admin_page.text)
+        self.assertIn("data-contract-json", admin_page.text)
+        self.assertIn('data-view="security"', admin_page.text)
+        self.assertIn("data-security-incidents", admin_page.text)
         self.assertIn("data-document-dropzone", admin_page.text)
         self.assertIn("data-upload-documents", admin_page.text)
         self.assertIn("data-document-registry", admin_page.text)
-        self.assertIn("v=20261016-document-pipeline", admin_page.text)
+        self.assertIn("v=20261107-rag-security", admin_page.text)
         self.assertIn("no-store", admin_page.headers["cache-control"])
 
         admin_script = self.client.get(
-            "/admin-assets/scripts/app.js?v=20261016-document-pipeline"
+            "/admin-assets/scripts/app.js?v=20261107-rag-security"
         )
         self.assertEqual(admin_script.status_code, 200)
         self.assertIn("tenant-card__open", admin_script.text)
@@ -204,6 +209,9 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertIn("updateKnowledgePanel", admin_script.text)
         self.assertIn("selectDocuments", admin_script.text)
         self.assertIn("loadDocuments", admin_script.text)
+        self.assertIn("loadContracts", admin_script.text)
+        self.assertIn("contractAction", admin_script.text)
+        self.assertIn("loadSecurityIncidents", admin_script.text)
         self.assertIn("no-store", admin_script.headers["cache-control"])
 
         chat_redirect = self.client.get("/chat", follow_redirects=False)
@@ -226,11 +234,50 @@ class AuthenticationApiTests(unittest.TestCase):
         created_tenant = create_tenant.json()["tenant"]
         self.created_tenant_ids.append(created_tenant["id"])
         self.assertEqual(created_tenant["slug"], tenant_slug)
-        self.assertTrue(created_tenant["is_active"])
+        self.assertFalse(created_tenant["is_active"])
+        self.assertEqual(created_tenant["contract_state"], "draft")
+
+        contracts = self.client.get(
+            f"/api/admin/tenants/{created_tenant['id']}/contracts"
+        )
+        self.assertEqual(contracts.status_code, 200)
+        self.assertEqual(len(contracts.json()), 1)
+        self.assertEqual(contracts.json()[0]["state"], "draft")
+        self.assertTrue(contracts.json()[0]["signature_valid"])
+        default_contract_id = contracts.json()[0]["id"]
+
+        unavailable_registration = self.client.post(
+            "/api/auth/register",
+            json={
+                "email": f"onboarding-{uuid4().hex}@example.com",
+                "password": password,
+                "tenant_id": created_tenant["id"],
+            },
+        )
+        self.assertEqual(unavailable_registration.status_code, 400)
+        blocked_manual_activation = self.client.patch(
+            f"/api/admin/tenants/{created_tenant['id']}",
+            json={"is_active": True},
+        )
+        self.assertEqual(blocked_manual_activation.status_code, 409)
+
+        approved_contract = self.client.post(
+            f"/api/admin/contracts/{default_contract_id}/approve"
+        )
+        self.assertEqual(approved_contract.status_code, 200)
+        activated_contract = self.client.post(
+            f"/api/admin/contracts/{default_contract_id}/activate"
+        )
+        self.assertEqual(activated_contract.status_code, 200)
 
         managed_tenants = self.client.get("/api/admin/tenants")
         self.assertEqual(managed_tenants.status_code, 200)
         self.assertIn(created_tenant["id"], {item["id"] for item in managed_tenants.json()})
+        activated_tenant = next(
+            item for item in managed_tenants.json() if item["id"] == created_tenant["id"]
+        )
+        self.assertTrue(activated_tenant["is_active"])
+        self.assertEqual(activated_tenant["contract_state"], "active")
 
         duplicate_tenant = self.client.post(
             "/api/admin/tenants",
@@ -337,17 +384,20 @@ class AuthenticationApiTests(unittest.TestCase):
         self.assertEqual(manager_page.status_code, 200)
         self.assertIn('data-panel="chat"', manager_page.text)
         self.assertIn('data-panel="management"', manager_page.text)
+        self.assertIn('data-panel="security"', manager_page.text)
+        self.assertIn("data-security-incidents", manager_page.text)
         self.assertIn("data-document-dropzone", manager_page.text)
         self.assertIn("data-document-registry", manager_page.text)
-        self.assertIn("v=20261016-document-pipeline", manager_page.text)
+        self.assertIn("v=20261107-rag-security", manager_page.text)
         self.assertIn("no-store", manager_page.headers["cache-control"])
         manager_script = self.client.get(
-            "/manager-assets/scripts/app.js?v=20261016-document-pipeline"
+            "/manager-assets/scripts/app.js?v=20261107-rag-security"
         )
         self.assertEqual(manager_script.status_code, 200)
         self.assertIn("loadTenantWorkspace", manager_script.text)
         self.assertIn("openRoleConfirmation", manager_script.text)
         self.assertIn("loadDocuments", manager_script.text)
+        self.assertIn("loadSecurityIncidents", manager_script.text)
         self.assertIn("no-store", manager_script.headers["cache-control"])
 
         tenant_workspace = self.client.get("/api/manager/tenant")

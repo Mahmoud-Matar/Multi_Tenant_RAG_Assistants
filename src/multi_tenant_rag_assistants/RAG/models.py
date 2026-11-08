@@ -14,6 +14,10 @@ class SecurityContext:
     tenant_key: str
     role: str
     access_scopes: tuple[str, ...]
+    contract_id: str
+    contract_version: int
+    contract_hash: str
+    contract: dict
 
 
 @dataclass(frozen=True)
@@ -43,10 +47,12 @@ class Citation(BaseModel):
 
 class RAGQueryResponse(BaseModel):
     request_id: str
+    policy_version: int
     answer: str
     citations: list[Citation]
     abstained: bool
     retrieved_chunk_count: int
+    security_blocked: bool = False
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg import errors
 from pydantic import BaseModel, Field, field_validator
 
+from .contracts import (
+    ContractUnavailableError,
+    TenantDomainContract,
+    activate_contract,
+    approve_contract,
+    contract_payload,
+    create_contract_version,
+    ensure_default_contract,
+    get_active_contract,
+    rollback_contract,
+    verify_contract_row,
+)
 from .database import connect
 
 
@@ -52,6 +64,7 @@ def tenant_admin_payload(row: dict) -> dict:
         "is_active": row["is_active"],
         "user_count": row.get("user_count", 0),
         "created_at": row["created_at"],
+        "contract_state": row.get("contract_state"),
     }
 
 
@@ -65,7 +78,10 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
             rows = connection.execute(
                 """
                 SELECT t.id, t.name, t.slug, t.description, t.is_active, t.created_at,
-                       COUNT(u.id)::INTEGER AS user_count
+                       COUNT(u.id)::INTEGER AS user_count,
+                       (SELECT c.state FROM tenant_domain_contracts c
+                        WHERE c.tenant_id = t.id
+                        ORDER BY c.version DESC LIMIT 1) AS contract_state
                 FROM rag_tenants AS t
                 LEFT JOIN rag_users AS u ON u.tenant_id = t.id
                 GROUP BY t.id
@@ -77,24 +93,122 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
     @router.post("/tenants", status_code=status.HTTP_201_CREATED)
     def create_tenant(
         payload: TenantCreateRequest,
-        _: dict = Depends(require_admin),
+        administrator: dict = Depends(require_admin),
     ) -> dict:
         try:
             with connect() as connection:
                 tenant = connection.execute(
                     """
-                    INSERT INTO rag_tenants (name, slug, description)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO rag_tenants (name, slug, description, is_active)
+                    VALUES (%s, %s, %s, FALSE)
                     RETURNING id, name, slug, description, is_active, created_at
                     """,
                     (payload.name, payload.slug, payload.description),
                 ).fetchone()
+                ensure_default_contract(
+                    connection,
+                    tenant["id"],
+                    tenant["name"],
+                    initial_state="draft",
+                    actor_id=administrator["id"],
+                )
+                tenant["contract_state"] = "draft"
         except errors.UniqueViolation as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A tenant with this name or slug already exists.",
             ) from exc
         return {"tenant": tenant_admin_payload(tenant)}
+
+    @router.get("/tenants/{tenant_id}/contracts")
+    def list_tenant_contracts(
+        tenant_id: int,
+        _: dict = Depends(require_admin),
+    ) -> list[dict]:
+        with connect() as connection:
+            tenant = connection.execute(
+                "SELECT id FROM rag_tenants WHERE id = %s", (tenant_id,)
+            ).fetchone()
+            if tenant is None:
+                raise HTTPException(status_code=404, detail="Tenant not found.")
+            rows = connection.execute(
+                "SELECT * FROM tenant_domain_contracts WHERE tenant_id = %s ORDER BY version DESC",
+                (tenant_id,),
+            ).fetchall()
+        payloads = []
+        for row in rows:
+            payload = contract_payload(row)
+            try:
+                verify_contract_row(row)
+                payload["signature_valid"] = True
+            except ContractUnavailableError:
+                payload["signature_valid"] = False
+            payloads.append(payload)
+        return payloads
+
+    @router.post(
+        "/tenants/{tenant_id}/contracts", status_code=status.HTTP_201_CREATED
+    )
+    def create_tenant_contract(
+        tenant_id: int,
+        payload: TenantDomainContract,
+        administrator: dict = Depends(require_admin),
+    ) -> dict:
+        with connect() as connection:
+            tenant = connection.execute(
+                "SELECT id FROM rag_tenants WHERE id = %s", (tenant_id,)
+            ).fetchone()
+            if tenant is None:
+                raise HTTPException(status_code=404, detail="Tenant not found.")
+            row = create_contract_version(
+                connection,
+                tenant_id=tenant_id,
+                contract=payload,
+                actor_id=administrator["id"],
+            )
+        return {"contract": contract_payload(row)}
+
+    @router.post("/contracts/{contract_id}/approve")
+    def approve_tenant_contract(
+        contract_id: str,
+        administrator: dict = Depends(require_admin),
+    ) -> dict:
+        with connect() as connection:
+            row = approve_contract(connection, contract_id, administrator["id"])
+        if row is None:
+            raise HTTPException(status_code=409, detail="Only draft contracts can be approved.")
+        return {"contract": contract_payload(row)}
+
+    @router.post("/contracts/{contract_id}/activate")
+    def activate_tenant_contract(
+        contract_id: str,
+        administrator: dict = Depends(require_admin),
+    ) -> dict:
+        try:
+            with connect() as connection:
+                row = activate_contract(connection, contract_id, administrator["id"])
+        except ContractUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if row is None:
+            raise HTTPException(status_code=409, detail="Only approved contracts can be activated.")
+        return {"contract": contract_payload(row)}
+
+    @router.post("/contracts/{contract_id}/rollback")
+    def rollback_tenant_contract(
+        contract_id: str,
+        administrator: dict = Depends(require_admin),
+    ) -> dict:
+        try:
+            with connect() as connection:
+                row = rollback_contract(connection, contract_id, administrator["id"])
+        except ContractUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Only a valid superseded contract can be restored.",
+            )
+        return {"contract": contract_payload(row)}
 
     @router.patch("/tenants/{tenant_id}")
     def set_tenant_status(
@@ -103,6 +217,14 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
         _: dict = Depends(require_admin),
     ) -> dict:
         with connect() as connection:
+            if payload.is_active:
+                try:
+                    get_active_contract(connection, tenant_id)
+                except ContractUnavailableError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Activate an approved Tenant Domain Contract before activating the tenant.",
+                    ) from exc
             tenant = connection.execute(
                 """
                 UPDATE rag_tenants
@@ -112,6 +234,12 @@ def create_admin_router(require_admin: Callable[..., dict]) -> APIRouter:
                 """,
                 (payload.is_active, tenant_id),
             ).fetchone()
+            if tenant is not None:
+                state_row = connection.execute(
+                    "SELECT state FROM tenant_domain_contracts WHERE tenant_id = %s ORDER BY version DESC LIMIT 1",
+                    (tenant_id,),
+                ).fetchone()
+                tenant["contract_state"] = state_row["state"] if state_row else None
         if tenant is None:
             raise HTTPException(status_code=404, detail="Tenant not found.")
         return {"tenant": tenant_admin_payload(tenant)}

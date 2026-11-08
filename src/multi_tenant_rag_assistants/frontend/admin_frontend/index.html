@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Manage Atlas tenants and users." />
     <title>Atlas | Administration</title>
-    <link rel="stylesheet" href="/admin-assets/styles/main.css?v=20261016-document-pipeline" />
+    <link rel="stylesheet" href="/admin-assets/styles/main.css?v=20261107-rag-security" />
   </head>
   <body>
     <header class="topbar">
@@ -44,6 +44,8 @@
 
       <div class="view-tabs" role="tablist" aria-label="Administration sections">
         <button class="is-active" type="button" role="tab" aria-selected="true" data-view="tenants">Tenants</button>
+        <button type="button" role="tab" aria-selected="false" data-view="contracts">Domain contracts</button>
+        <button type="button" role="tab" aria-selected="false" data-view="security">Security incidents <span data-security-open-count></span></button>
         <button type="button" role="tab" aria-selected="false" data-view="users">Users by tenant</button>
         <button type="button" role="tab" aria-selected="false" data-view="admins">Admins</button>
       </div>
@@ -51,6 +53,30 @@
       <section class="panel" data-panel="tenants">
         <div class="panel__header"><div><h2>Tenants</h2><p>Manage organizations and their access to Atlas.</p></div><span class="loading-label" data-tenant-status>Loading…</span></div>
         <div class="tenant-grid" data-tenant-grid></div>
+      </section>
+
+      <section class="panel" data-panel="security" hidden>
+        <div class="panel__header"><div><h2>Security incidents</h2><p>Review blocked prompts, tenant-escape attempts, hidden text, and poisoned retrieved content.</p></div><span class="loading-label" data-security-count>—</span></div>
+        <div class="incident-list" data-security-incidents><p class="empty-state">Open this tab to load incident reports.</p></div>
+      </section>
+
+      <section class="panel" data-panel="contracts" hidden>
+        <div class="panel__header"><div><h2>Tenant Domain Contracts</h2><p>Version, validate, approve, activate, and restore tenant governance policy.</p></div><span class="loading-label" data-contract-status>Choose a tenant</span></div>
+        <div class="contract-toolbar">
+          <label>Tenant<select data-contract-tenant aria-label="Tenant contract"></select></label>
+          <span data-contract-signature>Signed policy verification is enforced on activation and use.</span>
+        </div>
+        <div class="contract-layout">
+          <form class="contract-editor" data-contract-form>
+            <label>Contract JSON<textarea rows="24" spellcheck="false" data-contract-json required></textarea></label>
+            <p class="form-message" role="alert" data-contract-message hidden></p>
+            <button class="primary-button" type="submit" data-save-contract>Save new draft</button>
+          </form>
+          <section class="contract-history" aria-labelledby="contract-history-title">
+            <div class="document-registry__header"><div><strong id="contract-history-title">Version history</strong><small>Only approved contracts can become active.</small></div><span data-contract-count>—</span></div>
+            <div class="contract-history__list" data-contract-history><p class="empty-state">Choose a tenant to load its contracts.</p></div>
+          </section>
+        </div>
       </section>
 
       <section class="panel" data-panel="users" hidden>
@@ -135,6 +161,6 @@
     </dialog>
 
     <div class="toast" role="status" aria-live="polite" data-toast hidden></div>
-    <script type="module" src="/admin-assets/scripts/app.js?v=20261016-document-pipeline"></script>
+    <script type="module" src="/admin-assets/scripts/app.js?v=20261107-rag-security"></script>
   </body>
 </html>

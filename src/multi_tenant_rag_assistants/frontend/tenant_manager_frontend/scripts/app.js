@@ -16,6 +16,7 @@ const documentQueue = document.querySelector("[data-document-queue]");
 const documentList = document.querySelector("[data-document-list]");
 const uploadButton = document.querySelector("[data-upload-documents]");
 const documentRegistry = document.querySelector("[data-document-registry]");
+const securityIncidents = document.querySelector("[data-security-incidents]");
 const toast = document.querySelector("[data-toast]");
 
 const request = async (url, options = {}) => {
@@ -81,15 +82,94 @@ const setView = (view) => {
   });
   document.querySelector("[data-chat-navigation]").hidden = view !== "chat";
   document.querySelector("[data-page-title]").textContent =
-    view === "chat" ? "Atlas Assistant" : state.tenant?.name || "Tenant management";
+    view === "chat"
+      ? "Atlas Assistant"
+      : view === "security"
+        ? "Security reports"
+        : state.tenant?.name || "Tenant management";
   document.querySelector("[data-page-status]").innerHTML =
     view === "chat" ? "<i></i> Ready" : "<i></i> Manager workspace";
   setSidebar(false);
   if (view === "chat") prompt.focus();
+  if (view === "security") loadSecurityIncidents();
 };
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
 });
+
+const updateIncidentStatus = async (incident, status) => {
+  try {
+    await request(`/api/manager/security/incidents/${incident.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    await loadSecurityIncidents();
+    showToast(`Incident ${status}.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+};
+
+const renderSecurityIncidents = (incidents) => {
+  const openCount = incidents.filter((incident) => incident.status !== "resolved").length;
+  document.querySelector("[data-security-open-count]").textContent =
+    openCount ? `(${openCount})` : "";
+  document.querySelector("[data-security-count]").textContent =
+    `${incidents.length} ${incidents.length === 1 ? "report" : "reports"}`;
+  if (!incidents.length) {
+    securityIncidents.replaceChildren(Object.assign(document.createElement("p"), {
+      className: "empty-state",
+      textContent: "No security incidents have been reported for this tenant.",
+    }));
+    return;
+  }
+  securityIncidents.replaceChildren(
+    ...incidents.map((incident) => {
+      const report = document.createElement("article");
+      report.className = `incident-card incident-card--${incident.severity}`;
+      const heading = document.createElement("div");
+      heading.className = "incident-card__heading";
+      const title = document.createElement("strong");
+      title.textContent = incident.category.replaceAll("_", " ");
+      const badges = document.createElement("span");
+      badges.textContent = `${incident.severity} · ${incident.status}`;
+      heading.append(title, badges);
+      const actor = document.createElement("p");
+      actor.textContent = `${incident.actor_username || incident.actor_email || "Unknown user"} · ${new Date(incident.detected_at).toLocaleString()}`;
+      const details = document.createElement("p");
+      details.textContent = `${incident.source.replaceAll("_", " ")} · policy v${incident.contract_version} · indicators: ${incident.indicators.join(", ")}`;
+      const excerpt = document.createElement("code");
+      excerpt.textContent = incident.evidence_excerpt || "No displayable evidence excerpt.";
+      const actions = document.createElement("div");
+      actions.className = "incident-actions";
+      if (incident.status === "open") {
+        const acknowledge = document.createElement("button");
+        acknowledge.type = "button";
+        acknowledge.textContent = "Acknowledge";
+        acknowledge.addEventListener("click", () => updateIncidentStatus(incident, "acknowledged"));
+        actions.append(acknowledge);
+      }
+      if (incident.status !== "resolved") {
+        const resolve = document.createElement("button");
+        resolve.type = "button";
+        resolve.textContent = "Resolve";
+        resolve.addEventListener("click", () => updateIncidentStatus(incident, "resolved"));
+        actions.append(resolve);
+      }
+      report.append(heading, actor, details, excerpt, actions);
+      return report;
+    }),
+  );
+};
+
+const loadSecurityIncidents = async () => {
+  try {
+    renderSecurityIncidents(await request("/api/manager/security/incidents"));
+  } catch (error) {
+    showToast(error.message);
+  }
+};
 
 const resizePrompt = () => {
   prompt.style.height = "auto";

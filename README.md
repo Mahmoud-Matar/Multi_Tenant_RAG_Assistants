@@ -16,6 +16,7 @@ A modular multi-tenant retrieval-augmented assistant project with a PostgreSQL-b
 - [`src/multi_tenant_rag_assistants/RAG/`](src/multi_tenant_rag_assistants/RAG/) — modular tenant-aware query screening, retrieval, ACL verification, grounded generation, citation validation, and auditing
 - [`docs/document-storage-pipeline.md`](docs/document-storage-pipeline.md) — document lifecycle, API, storage, metadata, and security reference
 - [`docs/rag-query-pipeline.md`](docs/rag-query-pipeline.md) — runtime RAG security boundary, response contract, and configuration reference
+- [`docs/security-incident-response.md`](docs/security-incident-response.md) — suspicious-content blocking, incident fields, role visibility, and triage workflow
 
 ## Prerequisites
 
@@ -44,6 +45,7 @@ than real credentials.
 | `OPENAI_API_KEY` | Authenticates requests to OpenAI for document embeddings, query embeddings, and grounded answer generation. Create a key in your OpenAI account and never commit it. |
 | `DATABASE_URL` | PostgreSQL connection string, including the host, port, database name, user, and password. Example structure: `postgresql://user:password@127.0.0.1:5432/rag_db`. |
 | `AUTH_SECRET_KEY` | Private random value used to sign and validate login session tokens. Use a long, unpredictable value that is different from your database password and OpenAI key. Changing it signs out existing sessions. |
+| `TDC_SIGNING_KEY` | Signs versioned Tenant Domain Contracts. Use a separate long random value in deployment. Local development falls back to `AUTH_SECRET_KEY` for compatibility. |
 | `COOKIE_SECURE` | Controls whether the browser sends the session cookie only over HTTPS. Use `false` for local HTTP development and `true` for an HTTPS deployment. |
 | `DOCUMENT_MAX_BYTES` | Maximum accepted upload size in bytes. The default `20971520` is 20 MiB. |
 | `DOCUMENT_SCANNER_MODE` | Upload scanning mode. `basic` performs development validation and EICAR detection; production should use `clamav`. |
@@ -65,3 +67,23 @@ Authenticated users and tenant managers query the knowledge base through
 `POST /api/rag/query`. The tenant and allowed access scopes are always derived
 from the signed session and revalidated in PostgreSQL; the client cannot select
 or override them.
+
+Platform administrators manage versioned Tenant Domain Contracts from the
+**Domain contracts** tab. Contracts validate tenant knowledge policy, domain
+boundaries, roles, retrieval thresholds, metric definitions, model routes,
+retention, and isolation tiers. Drafts must be approved before activation, and
+every active contract is hash-verified and HMAC-signed before use.
+
+New tenants begin in an inactive onboarding state with contract version 1 as a
+signed draft. They are hidden from public registration and cannot accept uploads
+or chat requests until an administrator approves and activates the contract.
+Contract activation activates the tenant atomically; manual tenant activation is
+rejected when no valid active contract exists.
+
+The RAG path hybrid-reranks only tenant- and ACL-authorized candidates, validates
+sentence-level citation support, and screens both questions and retrieved chunks
+for prompt injection, tenant escape, exfiltration, poisoning, and hidden text.
+Flagged content never reaches answer generation. Instead, a redacted in-app report
+is created for the tenant's managers and platform administrators, who can
+acknowledge or resolve it from their dashboards. External email/SIEM delivery is
+not part of the current implementation.

@@ -78,6 +78,32 @@ CREATE INDEX IF NOT EXISTS idx_rag_users_tenant_id ON rag_users (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_users_username_lower
     ON rag_users (LOWER(username)) WHERE username IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS tenant_domain_contracts (
+    id VARCHAR(40) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES rag_tenants(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    state VARCHAR(24) NOT NULL DEFAULT 'draft',
+    contract JSONB NOT NULL,
+    contract_hash CHAR(64) NOT NULL,
+    signature CHAR(64) NOT NULL,
+    created_by BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    approved_by BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    based_on_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMPTZ,
+    activated_at TIMESTAMPTZ,
+    CONSTRAINT uq_tenant_domain_contract_version UNIQUE (tenant_id, version),
+    CONSTRAINT chk_tenant_domain_contract_state CHECK (
+        state IN ('draft', 'approved', 'active', 'superseded', 'rolled_back')
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_domain_contract_active
+    ON tenant_domain_contracts (tenant_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_tenant_domain_contract_history
+    ON tenant_domain_contracts (tenant_id, version DESC);
+
 CREATE TABLE IF NOT EXISTS rag_documents (
     id VARCHAR(40) PRIMARY KEY,
     tenant_id BIGINT NOT NULL REFERENCES rag_tenants(id)
@@ -88,6 +114,8 @@ CREATE TABLE IF NOT EXISTS rag_documents (
     status VARCHAR(32) NOT NULL DEFAULT 'quarantined',
     access_scope VARCHAR(32) NOT NULL DEFAULT 'employee',
     uploaded_by BIGINT NOT NULL REFERENCES rag_users(id) ON DELETE RESTRICT,
+    contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT,
+    contract_version INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_rag_documents_status CHECK (
@@ -112,6 +140,11 @@ CREATE TABLE IF NOT EXISTS rag_document_versions (
     chunk_count INTEGER NOT NULL DEFAULT 0,
     approved_by BIGINT REFERENCES rag_users(id) ON DELETE RESTRICT,
     approved_at TIMESTAMPTZ,
+    contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT,
+    contract_version INTEGER,
+    embedding_model VARCHAR(120),
+    chunk_size INTEGER,
+    chunk_overlap INTEGER,
     failure_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_rag_document_version UNIQUE (document_id, version_number),
@@ -132,6 +165,8 @@ CREATE TABLE IF NOT EXISTS rag_document_audit (
     actor_id BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
     action VARCHAR(80) NOT NULL,
     outcome VARCHAR(32) NOT NULL,
+    contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT,
+    contract_version INTEGER,
     details JSONB NOT NULL DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -146,10 +181,46 @@ CREATE TABLE IF NOT EXISTS rag_query_audit (
     retrieved_chunk_count INTEGER NOT NULL DEFAULT 0,
     cited_chunk_count INTEGER NOT NULL DEFAULT 0,
     latency_ms INTEGER NOT NULL DEFAULT 0,
+    contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT,
+    contract_version INTEGER,
     details JSONB NOT NULL DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_rag_query_audit_outcome CHECK (
         outcome IN ('answered', 'abstained', 'denied', 'failed')
+    )
+);
+
+CREATE TABLE IF NOT EXISTS rag_security_incidents (
+    id VARCHAR(40) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES rag_tenants(id) ON DELETE RESTRICT,
+    actor_id BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    request_id VARCHAR(40),
+    contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT,
+    contract_version INTEGER,
+    source VARCHAR(32) NOT NULL,
+    category VARCHAR(48) NOT NULL,
+    severity VARCHAR(16) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'open',
+    document_id VARCHAR(40),
+    version_id VARCHAR(40),
+    chunk_id VARCHAR(80),
+    evidence_hash CHAR(64) NOT NULL,
+    evidence_excerpt TEXT NOT NULL DEFAULT '',
+    indicators JSONB NOT NULL DEFAULT '[]'::JSONB,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    acknowledged_by BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    acknowledged_at TIMESTAMPTZ,
+    resolved_by BIGINT REFERENCES rag_users(id) ON DELETE SET NULL,
+    resolved_at TIMESTAMPTZ,
+    CONSTRAINT chk_rag_security_incident_source CHECK (
+        source IN ('user_query', 'retrieved_content', 'document_ingestion')
+    ),
+    CONSTRAINT chk_rag_security_incident_severity CHECK (
+        severity IN ('low', 'medium', 'high', 'critical')
+    ),
+    CONSTRAINT chk_rag_security_incident_status CHECK (
+        status IN ('open', 'acknowledged', 'resolved')
     )
 );
 
@@ -161,6 +232,27 @@ CREATE INDEX IF NOT EXISTS idx_rag_document_audit_tenant
     ON rag_document_audit (tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rag_query_audit_tenant
     ON rag_query_audit (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_security_incidents_tenant
+    ON rag_security_incidents (tenant_id, status, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_security_incidents_open
+    ON rag_security_incidents (status, detected_at DESC)
+    WHERE status <> 'resolved';
+
+ALTER TABLE rag_documents
+    ADD COLUMN IF NOT EXISTS contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT;
+ALTER TABLE rag_documents ADD COLUMN IF NOT EXISTS contract_version INTEGER;
+ALTER TABLE rag_document_versions
+    ADD COLUMN IF NOT EXISTS contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT;
+ALTER TABLE rag_document_versions ADD COLUMN IF NOT EXISTS contract_version INTEGER;
+ALTER TABLE rag_document_versions ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(120);
+ALTER TABLE rag_document_versions ADD COLUMN IF NOT EXISTS chunk_size INTEGER;
+ALTER TABLE rag_document_versions ADD COLUMN IF NOT EXISTS chunk_overlap INTEGER;
+ALTER TABLE rag_document_audit
+    ADD COLUMN IF NOT EXISTS contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT;
+ALTER TABLE rag_document_audit ADD COLUMN IF NOT EXISTS contract_version INTEGER;
+ALTER TABLE rag_query_audit
+    ADD COLUMN IF NOT EXISTS contract_id VARCHAR(40) REFERENCES tenant_domain_contracts(id) ON DELETE RESTRICT;
+ALTER TABLE rag_query_audit ADD COLUMN IF NOT EXISTS contract_version INTEGER;
 """
 
 SEED_TENANTS = (
@@ -201,3 +293,46 @@ def initialize_database() -> None:
                 WHERE LOWER(username) = 'admin'
                 """
             )
+        from .contracts import ensure_default_contract
+
+        tenants = connection.execute(
+            "SELECT id, name, is_active FROM rag_tenants"
+        ).fetchall()
+        for tenant in tenants:
+            ensure_default_contract(
+                connection,
+                tenant["id"],
+                tenant["name"],
+                initial_state="active" if tenant["is_active"] else "draft",
+            )
+        connection.execute(
+            """
+            UPDATE rag_documents d
+            SET contract_id = c.id, contract_version = c.version
+            FROM tenant_domain_contracts c
+            WHERE c.tenant_id = d.tenant_id AND c.state = 'active'
+              AND d.contract_id IS NULL
+            """
+        )
+        connection.execute(
+            """
+            UPDATE rag_document_versions v
+            SET contract_id = d.contract_id, contract_version = d.contract_version
+            FROM rag_documents d
+            WHERE d.id = v.document_id AND v.contract_id IS NULL
+            """
+        )
+        connection.execute(
+            """
+            UPDATE rag_document_versions
+            SET embedding_model = COALESCE(embedding_model, %s),
+                chunk_size = COALESCE(chunk_size, %s),
+                chunk_overlap = COALESCE(chunk_overlap, %s)
+            WHERE embedding_model IS NULL OR chunk_size IS NULL OR chunk_overlap IS NULL
+            """,
+            (
+                os.getenv("DOCUMENT_EMBEDDING_MODEL", "text-embedding-3-small"),
+                int(os.getenv("DOCUMENT_CHUNK_SIZE", "1000")),
+                int(os.getenv("DOCUMENT_CHUNK_OVERLAP", "150")),
+            ),
+        )

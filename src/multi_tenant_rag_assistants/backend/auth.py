@@ -23,6 +23,7 @@ from .database import connect, initialize_database
 from .admin import create_admin_router
 from .documents import create_document_router
 from .manager import create_manager_router
+from .incidents import create_incident_router
 
 
 password_hasher = PasswordHasher()
@@ -336,6 +337,7 @@ app.include_router(create_admin_router(authenticated_admin))
 app.include_router(create_manager_router(authenticated_manager))
 app.include_router(create_document_router(authenticated_admin, authenticated_manager))
 app.include_router(create_rag_router(authenticated_rag_request))
+app.include_router(create_incident_router(authenticated_admin, authenticated_manager))
 
 
 authentication_frontend_directory = (

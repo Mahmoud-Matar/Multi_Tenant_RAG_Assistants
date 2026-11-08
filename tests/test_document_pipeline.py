@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from multi_tenant_rag_assistants.backend import documents
 from multi_tenant_rag_assistants.backend.auth import app
+from multi_tenant_rag_assistants.backend.contracts import ensure_default_contract
 from multi_tenant_rag_assistants.backend.database import connect
 
 
@@ -50,6 +51,9 @@ class DocumentPipelineTests(unittest.TestCase):
                 (f"Document Pipeline {suffix}", self.tenant_slug),
             ).fetchone()
             self.tenant_id = tenant["id"]
+            ensure_default_contract(
+                connection, self.tenant_id, f"Document Pipeline {suffix}"
+            )
             manager = connection.execute(
                 """
                 INSERT INTO rag_users
@@ -86,7 +90,9 @@ class DocumentPipelineTests(unittest.TestCase):
         self.temp_directory.cleanup()
 
     @staticmethod
-    def fake_embeddings(texts: list[str]) -> list[list[float]]:
+    def fake_embeddings(
+        texts: list[str], model: str = "text-embedding-3-small"
+    ) -> list[list[float]]:
         return [[float(index + 1), 0.25, 0.75] for index, _ in enumerate(texts)]
 
     def login_admin(self) -> None:
@@ -121,6 +127,8 @@ class DocumentPipelineTests(unittest.TestCase):
         self.assertEqual(uploaded.status_code, 202, uploaded.text)
         admin_document_id = uploaded.json()["document_id"]
         admin_version_id = uploaded.json()["version_id"]
+        self.assertTrue(uploaded.json()["contract_id"].startswith("tdc_"))
+        self.assertEqual(uploaded.json()["contract_version"], 1)
 
         registry = self.client.get(
             f"/api/admin/tenants/{self.tenant_id}/documents"

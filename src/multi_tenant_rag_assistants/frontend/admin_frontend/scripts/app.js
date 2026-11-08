@@ -18,6 +18,12 @@ const documentQueue = document.querySelector("[data-document-queue]");
 const documentList = document.querySelector("[data-document-list]");
 const uploadDocumentsButton = document.querySelector("[data-upload-documents]");
 const documentRegistry = document.querySelector("[data-document-registry]");
+const contractTenant = document.querySelector("[data-contract-tenant]");
+const contractForm = document.querySelector("[data-contract-form]");
+const contractJson = document.querySelector("[data-contract-json]");
+const contractMessage = document.querySelector("[data-contract-message]");
+const contractHistory = document.querySelector("[data-contract-history]");
+const securityIncidents = document.querySelector("[data-security-incidents]");
 let selectedDocuments = [];
 
 const request = async (url, options = {}) => {
@@ -125,18 +131,35 @@ const renderTenants = () => {
       const meta = document.createElement("div");
       meta.className = "tenant-card__meta";
       const status = document.createElement("span");
-      status.className = `state-pill${tenant.is_active ? "" : " is-suspended"}`;
-      status.textContent = tenant.is_active ? "Active" : "Suspended";
+      const onboarding =
+        !tenant.is_active && ["draft", "approved"].includes(tenant.contract_state);
+      status.className = `state-pill${tenant.is_active ? "" : onboarding ? " is-onboarding" : " is-suspended"}`;
+      status.textContent = tenant.is_active
+        ? "Active"
+        : onboarding
+          ? "Onboarding"
+          : "Suspended";
       const count = document.createElement("span");
       count.textContent = `${tenant.user_count} ${tenant.user_count === 1 ? "user" : "users"}`;
       meta.append(status, count);
       copy.append(name, description, meta);
       const action = document.createElement("button");
       action.type = "button";
-      action.className = `tenant-card__action${tenant.is_active ? "" : " is-reactivate"}`;
-      action.textContent = tenant.is_active ? "Suspend" : "Reactivate";
+      action.className = `tenant-card__action${tenant.is_active || onboarding ? "" : " is-reactivate"}`;
+      action.textContent = onboarding
+        ? "Configure policy"
+        : tenant.is_active
+          ? "Suspend"
+          : "Reactivate";
       action.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (onboarding) {
+          state.selectedTenantId = tenant.id;
+          contractTenant.value = String(tenant.id);
+          setView("contracts");
+          loadContracts(tenant.id);
+          return;
+        }
         setTenantStatus(tenant, !tenant.is_active, action);
       });
       card.append(openButton, badge, copy, action);
@@ -335,6 +358,210 @@ const loadTenants = async () => {
   if (!state.selectedTenantId && result.length)
     state.selectedTenantId = result[0].id;
   renderTenants();
+  contractTenant.replaceChildren(
+    ...result.map((tenant) => {
+      const option = document.createElement("option");
+      option.value = tenant.id;
+      option.textContent = tenant.name;
+      option.selected = tenant.id === state.selectedTenantId;
+      return option;
+    }),
+  );
+};
+
+const contractAction = async (contract, action) => {
+  try {
+    await request(`/api/admin/contracts/${contract.id}/${action}`, { method: "POST" });
+    await loadContracts(Number(contractTenant.value));
+    showToast(`Contract version ${contract.version} ${action === "rollback" ? "restored" : `${action}d`}.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+};
+
+const renderContracts = (contracts) => {
+  document.querySelector("[data-contract-count]").textContent =
+    `${contracts.length} ${contracts.length === 1 ? "version" : "versions"}`;
+  const active = contracts.find((contract) => contract.state === "active");
+  document.querySelector("[data-contract-status]").textContent = active
+    ? `Active v${active.version}`
+    : "No active contract";
+  document.querySelector("[data-contract-signature]").textContent = active?.signature_valid
+    ? `Active signature verified · ${active.contract_hash.slice(0, 12)}…`
+    : "No verified active policy";
+  if (active) contractJson.value = JSON.stringify(active.contract, null, 2);
+  if (!contracts.length) {
+    contractHistory.replaceChildren(Object.assign(document.createElement("p"), {
+      className: "empty-state",
+      textContent: "No contract versions exist for this tenant.",
+    }));
+    return;
+  }
+  contractHistory.replaceChildren(
+    ...contracts.map((contract) => {
+      const record = document.createElement("article");
+      record.className = "contract-record";
+      const copy = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = `Version ${contract.version}`;
+      const detail = document.createElement("small");
+      detail.textContent = `${contract.state.replaceAll("_", " ")} · ${contract.signature_valid ? "signature valid" : "signature invalid"}`;
+      copy.append(title, detail);
+      const badge = document.createElement("span");
+      badge.className = `contract-state contract-state--${contract.state}`;
+      badge.textContent = contract.state.replaceAll("_", " ");
+      const actions = document.createElement("div");
+      actions.className = "document-actions";
+      if (contract.state === "draft") {
+        const approve = document.createElement("button");
+        approve.type = "button";
+        approve.textContent = "Approve";
+        approve.addEventListener("click", () => contractAction(contract, "approve"));
+        actions.append(approve);
+      }
+      if (contract.state === "approved") {
+        const activate = document.createElement("button");
+        activate.type = "button";
+        activate.textContent = "Activate";
+        activate.addEventListener("click", () => contractAction(contract, "activate"));
+        actions.append(activate);
+      }
+      if (contract.state === "superseded") {
+        const rollback = document.createElement("button");
+        rollback.type = "button";
+        rollback.textContent = "Restore";
+        rollback.addEventListener("click", () => contractAction(contract, "rollback"));
+        actions.append(rollback);
+      }
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.textContent = "Inspect";
+      inspect.addEventListener("click", () => {
+        contractJson.value = JSON.stringify(contract.contract, null, 2);
+        contractJson.focus();
+      });
+      actions.append(inspect);
+      record.append(copy, badge, actions);
+      return record;
+    }),
+  );
+};
+
+const loadContracts = async (tenantId) => {
+  if (!tenantId) return;
+  contractHistory.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "empty-state",
+    textContent: "Loading contract history…",
+  }));
+  try {
+    renderContracts(await request(`/api/admin/tenants/${tenantId}/contracts`));
+  } catch (error) {
+    showToast(error.message);
+  }
+};
+
+contractTenant.addEventListener("change", () => loadContracts(Number(contractTenant.value)));
+contractForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  contractMessage.hidden = true;
+  let contract;
+  try {
+    contract = JSON.parse(contractJson.value);
+  } catch {
+    contractMessage.textContent = "Contract JSON is not valid.";
+    contractMessage.hidden = false;
+    return;
+  }
+  const button = document.querySelector("[data-save-contract]");
+  button.disabled = true;
+  try {
+    await request(`/api/admin/tenants/${contractTenant.value}/contracts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(contract),
+    });
+    await loadContracts(Number(contractTenant.value));
+    showToast("Contract draft saved and signed.");
+  } catch (error) {
+    contractMessage.textContent = error.message;
+    contractMessage.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+const updateIncidentStatus = async (incident, status) => {
+  try {
+    await request(`/api/admin/security/incidents/${incident.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    await loadSecurityIncidents();
+    showToast(`Incident ${status}.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+};
+
+const renderSecurityIncidents = (incidents) => {
+  const openCount = incidents.filter((incident) => incident.status !== "resolved").length;
+  document.querySelector("[data-security-count]").textContent =
+    `${incidents.length} ${incidents.length === 1 ? "report" : "reports"}`;
+  document.querySelector("[data-security-open-count]").textContent =
+    openCount ? `(${openCount})` : "";
+  if (!incidents.length) {
+    securityIncidents.replaceChildren(Object.assign(document.createElement("p"), {
+      className: "empty-state",
+      textContent: "No security incidents have been reported.",
+    }));
+    return;
+  }
+  securityIncidents.replaceChildren(
+    ...incidents.map((incident) => {
+      const report = document.createElement("article");
+      report.className = `incident-card incident-card--${incident.severity}`;
+      const heading = document.createElement("div");
+      heading.className = "incident-card__heading";
+      const title = document.createElement("strong");
+      title.textContent = incident.category.replaceAll("_", " ");
+      const badges = document.createElement("span");
+      badges.textContent = `${incident.severity} · ${incident.status}`;
+      heading.append(title, badges);
+      const summary = document.createElement("p");
+      summary.textContent = `${incident.actor_username || incident.actor_email || "Unknown user"} · ${incident.tenant_name} · ${new Date(incident.detected_at).toLocaleString()}`;
+      const details = document.createElement("p");
+      details.textContent = `${incident.source.replaceAll("_", " ")} · policy v${incident.contract_version} · indicators: ${incident.indicators.join(", ")}`;
+      const excerpt = document.createElement("code");
+      excerpt.textContent = incident.evidence_excerpt || "No displayable evidence excerpt.";
+      const actions = document.createElement("div");
+      actions.className = "document-actions";
+      if (incident.status === "open") {
+        const acknowledge = document.createElement("button");
+        acknowledge.type = "button";
+        acknowledge.textContent = "Acknowledge";
+        acknowledge.addEventListener("click", () => updateIncidentStatus(incident, "acknowledged"));
+        actions.append(acknowledge);
+      }
+      if (incident.status !== "resolved") {
+        const resolve = document.createElement("button");
+        resolve.type = "button";
+        resolve.textContent = "Resolve";
+        resolve.addEventListener("click", () => updateIncidentStatus(incident, "resolved"));
+        actions.append(resolve);
+      }
+      report.append(heading, summary, details, excerpt, actions);
+      return report;
+    }),
+  );
+};
+
+const loadSecurityIncidents = async () => {
+  try {
+    renderSecurityIncidents(await request("/api/admin/security/incidents"));
+  } catch (error) {
+    showToast(error.message);
+  }
 };
 
 const setTenantStatus = async (tenant, isActive, button) => {
@@ -664,6 +891,9 @@ document.querySelectorAll("[data-view]").forEach((button) => {
     if (button.dataset.view === "users" && state.selectedTenantId)
       loadUsers(state.selectedTenantId);
     if (button.dataset.view === "admins") loadAdmins();
+    if (button.dataset.view === "contracts" && contractTenant.value)
+      loadContracts(Number(contractTenant.value));
+    if (button.dataset.view === "security") loadSecurityIncidents();
   });
 });
 
@@ -730,5 +960,6 @@ const initialize = async () => {
   document.querySelector("[data-admin-name]").textContent =
     session.user.username || "admin";
   await loadTenants();
+  await loadSecurityIncidents();
 };
 initialize().catch((error) => showToast(error.message));
